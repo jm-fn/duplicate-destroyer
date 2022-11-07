@@ -1,0 +1,21 @@
+[package]
+name = "duplicate_destroyer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+id_tree = "1.8.0"
+log = "0.4"
+env_logger = "0.9"
+
+[dev-dependencies]
+tempdir = "0.3"
+mockall = "0.11"
+
+[[bin]]
+name = "duplicate_destroyer"
+path = "src/main.rs"
+
+[lib]
+name = "duplicate_destroyer"
+path = "src/lib.rs"
