@@ -21,19 +21,17 @@
 use core::fmt::Write;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::DirEntry;
+use std::fs::{DirEntry, read_dir, Metadata};
+use std::os::unix::fs::MetadataExt;
 use std::rc::Rc;
 
 use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
+use users::{get_current_gid, get_current_uid};
 
-// FIXME: Is there a better way? There has to be a better way. <07-11-22> //
-// These get replaced with unit test fakes
-use std::fs::{read_dir, Metadata};
-
-use crate::checksum::get_checksum;
+use crate::checksum::get_partial_checksum;
 use crate::duplicate_table::register_checksum;
 
-const CHCKSUM_LENGTH: i32 = 100;
+const CHCKSUM_LENGTH: usize = 100;
 
 /// Struct with metadata for files
 #[derive(Debug)]
@@ -59,12 +57,26 @@ struct InaccessibleNode {
     pub err: std::io::Error,
 }
 
+/// Struct for nodes with empty files
+#[derive(Debug)]
+struct ZeroLenNode {
+    pub path: OsString,
+}
+
+/// Struct for symlink nodes
+#[derive(Debug)]
+struct SymlinkNode {
+    pub path: OsString,
+}
+
 /// Enum for all the possible nodes in DirTree
 #[derive(Debug)]
 enum NodeType {
     File(FileNode),
     Dir(DirNode),
     Inaccessible(InaccessibleNode),
+    ZeroLen(ZeroLenNode),
+    Symlink(SymlinkNode),
 }
 
 /// Describes the directory structure
@@ -126,34 +138,70 @@ impl DirTree {
     /// * `parent_node` - NodeId of the parent directory. Is id of root, if there is no parent dir.
     fn create_subtree<T: WithMetadata>(&mut self, item: &T, parent_node: &NodeId) {
         let name = item.filepath();
+
         match item.metadata() {
             Ok(metadata) => {
                 // item is dir
                 if metadata.is_dir() {
-                    let node = NodeType::Dir(DirNode {
-                        path: name,
-                        size: None,
-                        duplicates: HashSet::new(),
-                    });
-                    let node_id = self.insert_node(node, parent_node);
-                    // FIXME: This contains 1 unnecessary allocation, maybe redo? <05-11-22> //
-                    // FIXME: This will probably crash on non-owned dirs. <05-11-22> //
-                    for file in read_dir(item.filepath()).expect("Could not read dir.") {
-                        let file = file.expect("Could not reach a file.");
-                        self.create_subtree(&file, &node_id);
+                    // first check if we have permissions to read dir
+                    match read_dir(&name) {
+                        Ok(file_iter) => {
+                            let node = NodeType::Dir(DirNode {
+                                path: name.clone(),
+                                size: None,
+                                duplicates: HashSet::new(),
+                            });
+                            let node_id = self.insert_node(node, parent_node);
+                            // FIXME: This contains 1 unnecessary allocation, maybe redo? <05-11-22> //
+                            // FIXME: This will probably crash on non-owned dirs. <05-11-22> //
+                            for file in read_dir(&item.filepath()).expect("Could not read dir.") {
+                                let file = file.expect("Could not reach a file.");
+                                self.create_subtree(&file, &node_id);
+                            }
+                        }
+
+                        // Dir not readable
+                        Err(e) => {
+                            log::info!("Could not access dir {:?}: {}", name, e);
+                            let inac_node =
+                                NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
+                            self.insert_node(inac_node, parent_node);
+                        }
                     }
 
                 // item is a file
                 } else {
-                    let checksum = get_checksum(&name, CHCKSUM_LENGTH);
-                    let node = NodeType::File(FileNode {
-                        path: name,
-                        size: metadata.len(),
-                        checksum: checksum.clone(),
-                        duplicates: HashSet::new(),
-                    });
-                    let node_id = self.insert_node(node, parent_node);
-                    register_checksum(checksum, item.filepath(), node_id);
+                    // Can't get checksum of empty files.
+                    if metadata.len() == 0 {
+                        let zero_len_node = NodeType::ZeroLen(ZeroLenNode { path: name });
+                        self.insert_node(zero_len_node, parent_node);
+
+                    // Symlinks get extra treatment
+                    } else if metadata.is_symlink() {
+                        let symlink_node = NodeType::Symlink(SymlinkNode { path: name });
+                        self.insert_node(symlink_node, parent_node);
+
+                    // Item is regular nonempty file
+                    } else {
+                        match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
+                            Ok(checksum) => {
+                                let node = NodeType::File(FileNode {
+                                    path: name,
+                                    size: metadata.len(),
+                                    checksum: checksum.clone(),
+                                    duplicates: HashSet::new(),
+                                });
+                                let node_id = self.insert_node(node, parent_node);
+                                register_checksum(checksum, item.filepath(), node_id);
+                            }
+                            Err(e) => {
+                                log::info!("Could not access dir {:?}: {}", name, e);
+                                let inac_node =
+                                    NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
+                                self.insert_node(inac_node, parent_node);
+                            }
+                        };
+                    }
                 }
             }
 
@@ -231,5 +279,4 @@ mod tests {
         let expected_tree = "Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} })\n";
         assert_eq!(expected_tree, out);
     }
-
 }
