@@ -7,8 +7,9 @@
 //! When the tree gets populated we also calculate hashes of the first CHCKSUM_LENGTH bytes of
 //! files and register them in the duplicate_table, which helps us find duplicates.
 //!
-//! # Example
-//! ```no_run
+//! # Example of use inside the crate
+//! ```compile_fail
+//! // Note that this uses crate-only public functions, so it will not compile outside of crate
 //! use duplicate_destroyer::dir_tree::DirTree;
 //!
 //! let mut dt = DirTree::new();
@@ -27,15 +28,7 @@ use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
 
 // FIXME: Is there a better way? There has to be a better way. <07-11-22> //
 // These get replaced with unit test fakes
-#[cfg(test)]
-use crate::fake_functions::{read_dir, Metadata};
-#[cfg(not(test))]
 use std::fs::{read_dir, Metadata};
-
-#[cfg(test)]
-use mockall::predicate::*;
-#[cfg(test)]
-use mockall::*;
 
 use crate::checksum::get_checksum;
 use crate::duplicate_table::register_checksum;
@@ -196,23 +189,12 @@ impl DirTree {
     }
 }
 
-// FIXME: Write this without duplicating the WithMetadata code. <07-11-22> //
-// Use automock only when testing
-#[cfg(test)]
-#[automock]
-pub(crate) trait WithMetadata {
-    fn metadata(&self) -> std::io::Result<Metadata>;
-    fn filepath(&self) -> OsString;
-}
-
-#[cfg(not(test))]
 /// Trait used to unify behaviour of OsString and DirEntry for create_subtree
 pub(crate) trait WithMetadata {
     fn metadata(&self) -> std::io::Result<Metadata>;
     fn filepath(&self) -> OsString;
 }
 
-#[cfg(not(test))]
 impl WithMetadata for OsString {
     fn metadata(&self) -> std::io::Result<Metadata> {
         std::fs::metadata(self)
@@ -223,7 +205,6 @@ impl WithMetadata for OsString {
     }
 }
 
-#[cfg(not(test))]
 impl WithMetadata for DirEntry {
     fn metadata(&self) -> std::io::Result<Metadata> {
         self.metadata()
@@ -251,24 +232,4 @@ mod tests {
         assert_eq!(expected_tree, out);
     }
 
-    #[test]
-    fn dirtree_add_directories_test() {
-        let mut mock_dir = MockWithMetadata::new();
-        let mock_metadata = Metadata::new(5, true);
-        mock_dir.expect_metadata().return_once(|| Ok(mock_metadata));
-        mock_dir
-            .expect_filepath()
-            .return_const(OsString::from("FILE"));
-
-        let mut dt = DirTree::new();
-        dt.add_directories(vec![mock_dir]);
-
-        let mut out = String::new();
-        dt.print(&mut out);
-        let expected_tree = "Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} })
-└── Dir(DirNode { path: \"FILE\", size: None, duplicates: {} })
-    └── File(FileNode { path: \"Some/test/file.\", size: 10, checksum: \"ADFADFASDFER213ds23d32rf23f2\", duplicates: {} })
-";
-        assert_eq!(expected_tree, out);
-    }
 }

@@ -11,8 +11,6 @@ pub mod dir_tree;
 mod duplicate_object;
 mod duplicate_table;
 
-#[cfg(test)]
-mod fake_functions;
 
 use std::ffi::OsString;
 
