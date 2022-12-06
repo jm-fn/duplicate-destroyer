@@ -31,6 +31,8 @@ use crate::checksum::get_partial_checksum;
 use crate::duplicate_table::DuplicateTable;
 
 const CHCKSUM_LENGTH: usize = 256;
+// FIXME: this might differ per directory, get it dynamically
+const DIR_SIZE: u64 = 4096;
 
 /********************/
 /*  NodeType Enum   */
@@ -261,7 +263,7 @@ impl DirTree {
     /// Traverses the duplicate tree post-order and gets duplicates from duplicate table for each
     /// FileNode. For each DirNode
     // FIXME: Make private //
-    pub(crate)fn _find_duplicates(&mut self) {
+    pub(crate) fn _find_duplicates(&mut self) {
         // FIXME: This is kinda hackish //
         // Get all root dirs processed
         let root_ids: Vec<&NodeId> = self
@@ -270,13 +272,15 @@ impl DirTree {
             .expect("DirTree has to have some subtrees by now.")
             .collect();
 
-        // Go through all root dirs
-        for root_id in root_ids {
-            for id in self.dir_tree
+        // Go through all root dirs and get duplicates for each node
+        for root_id in root_ids.iter() {
+            for id in self
+                .dir_tree
                 .traverse_post_order_ids(root_id)
                 .expect("Could not traverse tree for {root_id}")
             {
-                let node = self.dir_tree
+                let node = self
+                    .dir_tree
                     .get(&id)
                     .expect("Could not get a node with id {id:?}.");
                 match &mut *node.data().borrow_mut() {
@@ -284,10 +288,29 @@ impl DirTree {
                         DirTree::_add_duplicates_to_file_entry(id, entry, &self.duplicate_table);
                     }
                     NodeType::Dir(entry) => {
-                        self._get_possible_dupl_for_dirs(id, entry);
+                        self._get_possible_dupl_for_dirs(&id, entry);
                     }
                     _ => {}
                 }
+            }
+        }
+
+        // Go through root_dirs again filtering out false dir duplicates and setting dir size
+        for root_id in root_ids {
+            for id in self
+                .dir_tree
+                .traverse_post_order_ids(root_id)
+                .expect("Could not traverse tree for {root_id}")
+            {
+                let node = self
+                    .dir_tree
+                    .get(&id)
+                    .expect("Could not get a node with id {id:?}.");
+                if let NodeType::Dir(node) = &mut *node.data().borrow_mut() {
+                    self._filter_dir_duplicates(&id, node);
+                    self._set_dir_size(&id, node);
+                }
+
             }
         }
     }
@@ -333,13 +356,13 @@ impl DirTree {
     /// additional files that `dir_node` does not. This is solved by
     ///
     /// # Arguments
-    fn _get_possible_dupl_for_dirs(&self, node_id: NodeId, dir_node: &mut DirNode) {
+    fn _get_possible_dupl_for_dirs(&self, node_id: &NodeId, dir_node: &mut DirNode) {
         // FIXME: Handle empty dirs - If a dir contains empty dirs we might consider it duplicate
         // to another dir with the same empty dirs. Could be solved similarly to symlinks. //
         // FIXME: Handle symlinks correctly.
         let mut children = self
             .dir_tree
-            .children(&node_id)
+            .children(node_id)
             .expect("Could not get dirtree children.");
         let mut result = HashSet::new();
         // Get first set of duplicates
@@ -390,6 +413,80 @@ impl DirTree {
         TableData {
             path: parent_path,
             node_id: parent_id,
+        }
+    }
+
+    /// Set the size of DirNode
+    ///
+    /// Goes through all the children of DirNode and calculates its size.
+    ///
+    /// # Arguments
+    /// `node_id` - NodeId of the node whose size is being set
+    /// `node` - node whose size is being set
+    // FIXME: This is not accurate (maybe due to the constant DIR_SIZE?)
+    fn _set_dir_size(&self, node_id: &NodeId, node: &mut DirNode) {
+        let children = self
+            .dir_tree
+            .children(node_id)
+            .expect("Could not get dirtree children.");
+        let mut result = 0u64;
+
+        for child in children {
+            match &*child.data().borrow() {
+                NodeType::File(file) => {
+                    result += file.size;
+                }
+                NodeType::Dir(dir) => {
+                    if let Some(s) = dir.size {
+                        result += s;
+                    } else {
+                        // If size of any subdir is None (unknown), leave set to None
+                        return;
+                    }
+                }
+                NodeType::Inaccessible(_) => {
+                    // Size is unknown, leave set to None
+                    return;
+                }
+                NodeType::Symlink(_) => {}
+            }
+        }
+        // count the size of the directory listing as well
+        node.size = Some(result + DIR_SIZE);
+    }
+
+    /// Filter DirNode duplicates so that only real duplicates remain
+    ///
+    /// If a dir A contains all files in dir B, but dir B contains files not in dir A, we would
+    /// get that B is contained in duplicates of A even though they are not duplicates.
+    ///
+    /// This function goes through all duplicates of a node and removes the duplicates that don't
+    /// have the node in their duplicates as well.
+    ///
+    /// # Arguments
+    /// * `node_id` - NodeId of the node whose duplicates should be filtered
+    /// * `node` - node whose duplicates should be filtered
+    /// `node_id` should be id of `node`.
+    fn _filter_dir_duplicates(&self, node_id: &NodeId, node: &mut DirNode) {
+        node.duplicates.retain(|x| self._is_duplication_mutual(node_id, &x.node_id));
+    }
+
+    /// Check whether node with `first_id` is in duplicates of node with `other_id`
+    ///
+    /// # Arguments
+    /// * `first_id` - NodeId of the node that should be in `other_id`s duplicates
+    /// * `other_id` - NodeId of the node that should have `first_id` as a duplicate
+    fn _is_duplication_mutual(&self, first_id: &NodeId, other_id: &NodeId) -> bool {
+        let other_node = self
+            .dir_tree
+            .get(other_id)
+            .expect("Could not reach node {other_id}")
+            .data()
+            .borrow();
+        if let Some(hs) = other_node.duplicates() {
+            hs.iter().map(|x| &x.node_id).any(|x| x == first_id)
+        } else {
+            false
         }
     }
 }
