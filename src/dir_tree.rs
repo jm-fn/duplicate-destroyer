@@ -19,27 +19,30 @@
 //! ```
 
 use core::fmt::Write;
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{DirEntry, read_dir, Metadata};
-use std::os::unix::fs::MetadataExt;
-use std::rc::Rc;
+use std::fs::{read_dir, DirEntry, Metadata};
+use std::path::Path;
 
 use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
-use users::{get_current_gid, get_current_uid};
 
 use crate::checksum::get_partial_checksum;
-use crate::duplicate_table::register_checksum;
+use crate::duplicate_table::DuplicateTable;
 
-const CHCKSUM_LENGTH: usize = 100;
+const CHCKSUM_LENGTH: usize = 256;
+
+/********************/
+/*  NodeType Enum   */
+/********************/
 
 /// Struct with metadata for files
 #[derive(Debug)]
 struct FileNode {
     pub path: OsString,
     pub size: u64,
-    pub checksum: String,
-    pub duplicates: HashSet<Rc<NodeType>>,
+    pub part_checksum: String,
+    pub duplicates: HashSet<TableData>,
 }
 
 /// Struct with metadata for directories
@@ -47,7 +50,7 @@ struct FileNode {
 struct DirNode {
     pub path: OsString,
     pub size: Option<u64>,
-    pub duplicates: HashSet<Rc<NodeType>>,
+    pub duplicates: HashSet<TableData>,
 }
 
 /// Struct for inaccessible files
@@ -57,12 +60,7 @@ struct InaccessibleNode {
     pub err: std::io::Error,
 }
 
-/// Struct for nodes with empty files
-#[derive(Debug)]
-struct ZeroLenNode {
-    pub path: OsString,
-}
-
+// FIXME: Add duplicates to symlinks as well //
 /// Struct for symlink nodes
 #[derive(Debug)]
 struct SymlinkNode {
@@ -75,30 +73,49 @@ enum NodeType {
     File(FileNode),
     Dir(DirNode),
     Inaccessible(InaccessibleNode),
-    ZeroLen(ZeroLenNode),
     Symlink(SymlinkNode),
 }
 
+impl NodeType {
+    /// Get duplicates of the node
+    fn duplicates(&self) -> Option<&HashSet<TableData>> {
+        match self {
+            Self::File(val) => Some(&val.duplicates),
+            Self::Dir(val) => Some(&val.duplicates),
+            Self::Symlink(_) => None,
+            Self::Inaccessible(_) => None,
+        }
+    }
+}
+
+/*************************/
+/*   DirTree Structure   */
+/*************************/
+
 /// Describes the directory structure
 #[derive(Debug)]
-pub struct DirTree {
-    dir_tree: Tree<NodeType>,
+pub(crate) struct DirTree {
+    dir_tree: Tree<RefCell<NodeType>>,
     root_id: NodeId,
+    duplicate_table: DuplicateTable,
 }
 
 impl DirTree {
     /// Create new empty DirTree
     pub fn new() -> Self {
-        let mut tree: Tree<NodeType> = Tree::new();
+        let mut tree = Tree::new();
         let root_node = NodeType::Dir(DirNode {
             path: "ROOT_NODE".into(),
             size: None,
             duplicates: HashSet::new(),
         });
-        let root_id = tree.insert(Node::new(root_node), AsRoot).unwrap();
+        let root_id = tree
+            .insert(Node::new(RefCell::new(root_node)), AsRoot)
+            .unwrap();
         DirTree {
             dir_tree: tree,
             root_id,
+            duplicate_table: DuplicateTable::new(),
         }
     }
 
@@ -124,7 +141,9 @@ impl DirTree {
                 .children(&self.root_id)
                 .expect("Could not access root node in dir_tree.")
             {
-                if let NodeType::Inaccessible(InaccessibleNode { path, err }) = child.data() {
+                if let NodeType::Inaccessible(InaccessibleNode { path, err }) =
+                    &*child.data().borrow()
+                {
                     log::error!("Could not access directory {:?}: {}", path, err);
                 }
             }
@@ -154,7 +173,7 @@ impl DirTree {
                             let node_id = self.insert_node(node, parent_node);
                             // FIXME: This contains 1 unnecessary allocation, maybe redo? <05-11-22> //
                             // FIXME: This will probably crash on non-owned dirs. <05-11-22> //
-                            for file in read_dir(&item.filepath()).expect("Could not read dir.") {
+                            for file in file_iter {
                                 let file = file.expect("Could not reach a file.");
                                 self.create_subtree(&file, &node_id);
                             }
@@ -171,13 +190,8 @@ impl DirTree {
 
                 // item is a file
                 } else {
-                    // Can't get checksum of empty files.
-                    if metadata.len() == 0 {
-                        let zero_len_node = NodeType::ZeroLen(ZeroLenNode { path: name });
-                        self.insert_node(zero_len_node, parent_node);
-
                     // Symlinks get extra treatment
-                    } else if metadata.is_symlink() {
+                    if metadata.is_symlink() {
                         let symlink_node = NodeType::Symlink(SymlinkNode { path: name });
                         self.insert_node(symlink_node, parent_node);
 
@@ -188,11 +202,17 @@ impl DirTree {
                                 let node = NodeType::File(FileNode {
                                     path: name,
                                     size: metadata.len(),
-                                    checksum: checksum.clone(),
+                                    part_checksum: checksum.clone(),
                                     duplicates: HashSet::new(),
                                 });
                                 let node_id = self.insert_node(node, parent_node);
-                                register_checksum(checksum, item.filepath(), node_id);
+                                self.duplicate_table.register_item(
+                                    checksum,
+                                    TableData {
+                                        path: item.filepath(),
+                                        node_id,
+                                    },
+                                );
                             }
                             Err(e) => {
                                 log::info!("Could not access dir {:?}: {}", name, e);
@@ -225,17 +245,158 @@ impl DirTree {
     /// something is really broken.
     fn insert_node(&mut self, node: NodeType, parent_node: &NodeId) -> NodeId {
         self.dir_tree
-            .insert(Node::new(node), UnderNode(parent_node))
+            .insert(Node::new(RefCell::new(node)), UnderNode(parent_node))
             .expect("Could not a insert node under this node: {parent_node:?}")
     }
 
     /// Prints the dirtree structure.
-    pub(crate) fn print<W: Write>(&self, w: &mut W) {
+    pub(crate) fn print<W: Write>(self, w: &mut W) {
         self.dir_tree
             .write_formatted(w)
             .expect("Error writing dir_tree");
     }
+
+    /// Gets the duplicates for each node in DirTree.
+    ///
+    /// Traverses the duplicate tree post-order and gets duplicates from duplicate table for each
+    /// FileNode. For each DirNode
+    // FIXME: Make private //
+    pub(crate)fn _find_duplicates(&mut self) {
+        // FIXME: This is kinda hackish //
+        // Get all root dirs processed
+        let root_ids: Vec<&NodeId> = self
+            .dir_tree
+            .children_ids(&self.root_id)
+            .expect("DirTree has to have some subtrees by now.")
+            .collect();
+
+        // Go through all root dirs
+        for root_id in root_ids {
+            for id in self.dir_tree
+                .traverse_post_order_ids(root_id)
+                .expect("Could not traverse tree for {root_id}")
+            {
+                let node = self.dir_tree
+                    .get(&id)
+                    .expect("Could not get a node with id {id:?}.");
+                match &mut *node.data().borrow_mut() {
+                    NodeType::File(entry) => {
+                        DirTree::_add_duplicates_to_file_entry(id, entry, &self.duplicate_table);
+                    }
+                    NodeType::Dir(entry) => {
+                        self._get_possible_dupl_for_dirs(id, entry);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Gets duplicates of a file from the duplicate table and writes them to the data of the
+    /// corresponding node in DirTree.
+    ///
+    /// # Arguments
+    /// * `node_id` - node id of the file node in the DirTree
+    /// * `entry` - the node data where the duplicates should be added
+    /// * `table` - duplicate table where the duplicates are searched
+    /// `entry` corresponds to the data of the node with `node_id`
+    ///
+    /// # Panics
+    /// Panics when we can't get duplicates from the DuplicateTable.
+    fn _add_duplicates_to_file_entry(
+        node_id: NodeId,
+        entry: &mut FileNode,
+        table: &DuplicateTable,
+    ) {
+        // FIXME: Do this without cloning entry path? //
+        let data = TableData {
+            path: entry.path.clone(),
+            node_id,
+        };
+        let duplicates = table.get_duplicates(&entry.part_checksum, &data);
+
+        match duplicates {
+            Err(e) => panic!("Getting duplicates failed: {e}"),
+            Ok(dupl) => {
+                entry.duplicates = dupl;
+            }
+        }
+    }
+
+    /// Find all potential duplicate directories for a dir node
+    ///
+    /// Goes through all children of a `dir_node`, finds parents of their duplicates and gets the
+    /// subset of the parents that are parents for all of the files (dirs) under the `dir_node`.
+    /// These make up the set of all possible duplicate dirs for the `dir_node`.
+    ///
+    /// Note that the possible dirs found this way may not really be duplicate, as they can contain
+    /// additional files that `dir_node` does not. This is solved by
+    ///
+    /// # Arguments
+    fn _get_possible_dupl_for_dirs(&self, node_id: NodeId, dir_node: &mut DirNode) {
+        // FIXME: Handle empty dirs - If a dir contains empty dirs we might consider it duplicate
+        // to another dir with the same empty dirs. Could be solved similarly to symlinks. //
+        // FIXME: Handle symlinks correctly.
+        let mut children = self
+            .dir_tree
+            .children(&node_id)
+            .expect("Could not get dirtree children.");
+        let mut result = HashSet::new();
+        // Get first set of duplicates
+        if let Some(child) = children.next() {
+            let data = child.data().borrow();
+            result = match data.duplicates() {
+                None => return, // child node is inaccessible (or symlink), dir not duplicate
+                Some(hs) if hs.len() == 0 => return, // child node has no duplicates, so dir not
+                // duplicate
+                Some(hs) => hs.iter().map(|x| self._get_parent_table_data(x)).collect(),
+            };
+        } else {
+            // No child nodes, nothing to do...
+            return;
+        }
+
+        // For each child get intersection of duplicates
+        for child in children {
+            let data = child.data().borrow();
+            let parent_duplicates: HashSet<TableData> = match data.duplicates() {
+                None => return, // child node is inaccessible (or symlink), dir not duplicate
+                Some(hs) if hs.len() == 0 => return, // child node has no duplicates, dir not dupl.
+                Some(hs) => hs.iter().map(|x| self._get_parent_table_data(x)).collect(),
+            };
+            result.retain(|x| parent_duplicates.contains(x))
+        }
+
+        dir_node.duplicates = result;
+    }
+
+    /// Get TableData for a parent dir
+    ///
+    /// # Arguments
+    /// * `data` - Data of a node whose parent data should be returned
+    fn _get_parent_table_data(&self, data: &TableData) -> TableData {
+        let parent_path = Path::new(&data.path)
+            .parent()
+            .expect("Could not get parent path of {data.path}")
+            .as_os_str()
+            .to_owned();
+        let parent_id = self
+            .dir_tree
+            .get(&data.node_id)
+            .unwrap()
+            .parent()
+            .expect("Could not get parent id of {data.node_id}.")
+            .to_owned();
+        TableData {
+            path: parent_path,
+            node_id: parent_id,
+        }
+    }
 }
+
+/**************************/
+/*   WithMetadata Trait   */
+/**************************/
 
 /// Trait used to unify behaviour of OsString and DirEntry for create_subtree
 pub(crate) trait WithMetadata {
@@ -262,6 +423,28 @@ impl WithMetadata for DirEntry {
         self.path().into_os_string()
     }
 }
+
+/***************************/
+/*   TableData Structure   */
+/***************************/
+
+/// Struct with data identifying node corresponding to file. Used as interface for DuplicateTable
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
+pub(crate) struct TableData {
+    path: OsString,
+    node_id: NodeId,
+}
+
+impl TableData {
+    /// Get path to file
+    pub(crate) fn path(&self) -> &OsString {
+        &self.path
+    }
+}
+
+/******************/
+/*   Unit Tests   */
+/******************/
 
 // Unit tests
 #[cfg(test)]

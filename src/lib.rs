@@ -20,6 +20,7 @@ use duplicate_object::*;
 pub fn get_duplicates(directories: Vec<OsString>) -> Result<Vec<DuplicateObject>, DuDeError> {
     let mut tree = dir_tree::DirTree::new();
     tree.add_directories(directories);
+    tree._find_duplicates();
     let mut s = String::new();
     tree.print(&mut s);
 

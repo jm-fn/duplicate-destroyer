@@ -1,12 +1,30 @@
 //! Checksum calculation module
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{prelude::Read, Error, Result};
+use std::io::{prelude::Read, BufReader, Result};
 
 use blake2::{Blake2b512, Digest};
 
-pub(crate) fn get_checksum(path: &OsString, length: i32) -> String {
-    String::from("adfadfacdfec213dca3d32af23f2")
+/// Calculate checksum for a whole file
+///
+/// # Arguments
+/// * `path` - path to the file to be checksummed
+pub(crate) fn get_checksum(path: &OsString) -> Result<String> {
+    let mut hasher = Blake2b512::new();
+    let mut buffer = [0u8; 1024];
+
+    let mut buf_reader = BufReader::new(File::open(path)?);
+
+    loop {
+        let count = buf_reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+
+    let result = format!("{:x}", hasher.finalize());
+    Ok(result)
 }
 
 /// Calculate checksum of first LEN bytes of a file
@@ -25,13 +43,6 @@ pub(crate) fn get_partial_checksum<const LEN: usize>(path: &OsString) -> Result<
 
     let mut input = File::open(path)?;
     let count = input.read(&mut buffer)?;
-    if count == 0 {
-        return Err(Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "File read returned 0 bytes.",
-        ));
-    }
-
     hasher.update(&buffer[..count]);
     let result = format!("{:x}", hasher.finalize());
     Ok(result)
