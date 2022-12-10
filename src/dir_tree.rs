@@ -390,6 +390,15 @@ impl DirTree {
             result.retain(|x| parent_duplicates.contains(x))
         }
 
+        // If we have e.g. a dir that has only a file and its copy, we would get that the dir
+        // itself is its duplicate. Remove such case.
+        result.retain(|x| {
+            !(*x == TableData {
+                path: dir_node.path.clone(),
+                node_id: node_id.to_owned(),
+            })
+        });
+
         dir_node.duplicates = result;
     }
 
