@@ -11,22 +11,24 @@ pub mod dir_tree;
 mod duplicate_object;
 mod duplicate_table;
 
+pub use duplicate_object::DuplicateObject;
 
 use std::ffi::OsString;
+use std::collections::HashMap;
 
 use duplicate_object::*;
 
 #[cfg(not(test))]
-pub fn get_duplicates(directories: Vec<OsString>) -> Result<Vec<DuplicateObject>, DuDeError> {
+pub fn get_duplicates(directories: Vec<OsString>, mut options: HashMap<String, u64>) -> Result<Vec<DuplicateObject>, DuDeError> {
+
     let mut tree = dir_tree::DirTree::new();
     tree.add_directories(directories);
-    let duplicates = tree.get_duplicates();
-    println!("Duplicates:\n{:?}", duplicates);
-    let mut s = String::new();
-    tree.print(&mut s);
 
-    println!("\n\n");
-    println!("{s}");
+    log::debug!("Finished adding directories");
+    let min_size = options.remove("min_size").unwrap_or(0);
+    let mut duplicates = tree.get_duplicates(min_size);
+    duplicates.sort_by_key(|x| x.size);
+    duplicates.reverse();
 
-    Ok(vec![DuplicateObject::new(1, std::collections::HashSet::new())])
+    Ok(duplicates)
 }

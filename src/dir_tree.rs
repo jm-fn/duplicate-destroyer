@@ -32,7 +32,7 @@ use crate::duplicate_table::DuplicateTable;
 use crate::ContEnum;
 use crate::DuplicateObject;
 
-const CHCKSUM_LENGTH: usize = 256;
+const CHCKSUM_LENGTH: usize = 1024;
 // FIXME: this might differ per directory, get it dynamically
 const DIR_SIZE: u64 = 4096;
 
@@ -136,6 +136,7 @@ impl DirTree {
     /// and directories.
     pub(crate) fn add_directories<T: WithMetadata>(&mut self, dirs: Vec<T>) {
         for dir in dirs {
+            log::info!("Adding directory {:?} to DirTree.", dir.filepath());
             // FIXME: Somehow solve this without cloning root_id? <05-11-22> //
             // FIXME: Also, maybe remove root_id from self? <05-11-22> //
             self.create_subtree(&dir, &self.root_id.clone());
@@ -160,14 +161,15 @@ impl DirTree {
     /// First we find duplicates for all nodes in DirTree. Then we create the list of duplicates -
     /// we go recusrively through the DirTree, whenever we find that a node has duplicates we add
     /// the duplicate group to the list and we don't search its children.
-    pub(crate) fn get_duplicates(&mut self) -> Vec<DuplicateObject> {
+    pub(crate) fn get_duplicates(&mut self, min_size: u64) -> Vec<DuplicateObject> {
         log::info!("Getting duplicates.");
         self._find_duplicates();
         let root_ids = self._get_root_ids();
 
         let mut duplicates: Vec<DuplicateObject> = vec![];
+        let mut contained: Vec<DuplicateObject> = vec![];
         for r_id in root_ids {
-            self._recursively_find_duplicates(&r_id, &mut duplicates);
+            self._recursively_find_duplicates(&r_id, min_size, &mut duplicates, &mut contained);
         }
 
         duplicates
@@ -181,10 +183,13 @@ impl DirTree {
     /// # Arguments
     /// * `node_id` - NodeId of the node that we want to search for duplicates
     /// * `duplicates` - Vector to add duplicate groups to
+    // FIXME: Refactor this mess...
     fn _recursively_find_duplicates(
         &self,
         node_id: &NodeId,
+        min_size: u64,
         duplicates: &mut Vec<DuplicateObject>,
+        contained: &mut Vec<DuplicateObject>,
     ) {
         let node = &*self
             .dir_tree
@@ -201,6 +206,10 @@ impl DirTree {
                         .map(|x| x.duplicates.iter())
                         .flatten()
                         .any(|x| *x == dir.path))
+                        && dir
+                            .size
+                            .expect("Dir without size should not have duplicates.")
+                            > min_size
                     {
                         self._add_duplicates_to_list(
                             dir.path.clone(),
@@ -208,6 +217,7 @@ impl DirTree {
                                 .expect("Dir without size should not have duplicates."),
                             dir.duplicates.iter().map(|x| x.to_owned()).collect(),
                             duplicates,
+                            contained,
                         );
                     }
                 // Node has no duplicates, search all children
@@ -217,7 +227,9 @@ impl DirTree {
                         .children_ids(node_id)
                         .expect("Could not get children for id {node_id}")
                     {
-                        self._recursively_find_duplicates(child_id, duplicates);
+                        self._recursively_find_duplicates(
+                            child_id, min_size, duplicates, contained,
+                        );
                     }
                 }
             }
@@ -230,12 +242,15 @@ impl DirTree {
                         .flatten()
                         .any(|x| *x == file.path))
                     {
-                        self._add_duplicates_to_list(
-                            file.path.clone(),
-                            file.size,
-                            file.duplicates.iter().map(|x| x.to_owned()).collect(),
-                            duplicates,
-                        );
+                        if file.size > min_size {
+                            self._add_duplicates_to_list(
+                                file.path.clone(),
+                                file.size,
+                                file.duplicates.iter().map(|x| x.to_owned()).collect(),
+                                duplicates,
+                                contained,
+                            );
+                        }
                     }
                 }
             }
@@ -279,8 +294,19 @@ impl DirTree {
         size: u64,
         data: HashSet<TableData>,
         duplicates: &mut Vec<DuplicateObject>,
+        contained: &mut Vec<DuplicateObject>,
     ) {
         log::trace!("Adding {:?} to list of duplicates.", path);
+        // If there is already a group with path in contained, do nothing
+        if (contained
+            .iter()
+            .map(|x| x.duplicates.iter())
+            .flatten()
+            .any(|x| *x == path))
+        {
+            return;
+        }
+
         // For all paths in duplicate group look if it is not contained/contains path from
         // some already included duplicate group. If so, remove the group that is contained.
         let mut is_cont: Vec<DuplicateObject> = vec![];
@@ -324,12 +350,15 @@ impl DirTree {
                     .position(|x| *x == dup_o)
                     .expect(&format!("Duplicate object not found {dup_o:?}")),
             );
+            contained.push(dup_o)
         }
 
+        let mut paths: HashSet<OsString> = paths.into_iter().map(|x| x.to_owned()).collect();
+        paths.insert(path.clone());
         if !(is_cont.len() > 0) {
-            let mut paths: HashSet<OsString> = paths.into_iter().map(|x| x.to_owned()).collect();
-            paths.insert(path.clone());
             duplicates.push(DuplicateObject::new(size, paths));
+        } else {
+            contained.push(DuplicateObject::new(size, paths));
         }
     }
 

@@ -5,9 +5,9 @@ use std::ffi::OsString;
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct DuplicateObject {
     /// Set of all duplicate paths in group
-    pub(crate) duplicates: HashSet<OsString>,
+    pub duplicates: HashSet<OsString>,
     /// Size of one element in duplicates
-    size: u64,
+    pub size: u64,
 }
 
 impl DuplicateObject {
@@ -77,6 +77,7 @@ impl ContEnum {
 
 /// Placeholder for Duplicate Destroyer Error.
 /// Maybe unnecessary?
+#[derive(Debug)]
 pub struct DuDeError {
     error: String,
 }
