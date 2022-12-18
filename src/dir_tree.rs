@@ -140,6 +140,7 @@ impl DirTree {
             // FIXME: Also, maybe remove root_id from self? <05-11-22> //
             self.create_subtree(&dir, &self.root_id.clone());
             // FIXME: Make this display only once per inaccessible node <06-11-22> //
+            log::info!("Finished creating subtree");
             for child in self
                 .dir_tree
                 .children(&self.root_id)
@@ -160,6 +161,7 @@ impl DirTree {
     /// we go recusrively through the DirTree, whenever we find that a node has duplicates we add
     /// the duplicate group to the list and we don't search its children.
     pub(crate) fn get_duplicates(&mut self) -> Vec<DuplicateObject> {
+        log::info!("Getting duplicates.");
         self._find_duplicates();
         let root_ids = self._get_root_ids();
 
@@ -187,7 +189,7 @@ impl DirTree {
         let node = &*self
             .dir_tree
             .get(node_id)
-            .expect("Could not get node {node_id}")
+            .expect(&format!("Could not get node {node_id:?}"))
             .data()
             .borrow();
         match node {
@@ -278,6 +280,7 @@ impl DirTree {
         data: HashSet<TableData>,
         duplicates: &mut Vec<DuplicateObject>,
     ) {
+        log::trace!("Adding {:?} to list of duplicates.", path);
         // For all paths in duplicate group look if it is not contained/contains path from
         // some already included duplicate group. If so, remove the group that is contained.
         let mut is_cont: Vec<DuplicateObject> = vec![];
@@ -319,7 +322,7 @@ impl DirTree {
                 duplicates
                     .iter()
                     .position(|x| *x == dup_o)
-                    .expect("Duplicate object not found {}"),
+                    .expect(&format!("Duplicate object not found {dup_o:?}")),
             );
         }
 
@@ -343,6 +346,7 @@ impl DirTree {
                 // item is dir
                 if metadata.is_dir() {
                     // first check if we have permissions to read dir
+                    log::info!("Reading dir: {name:?}");
                     match read_dir(&name) {
                         Ok(file_iter) => {
                             let node = NodeType::Dir(DirNode {
@@ -467,6 +471,7 @@ impl DirTree {
     pub(crate) fn _find_duplicates(&mut self) {
         // FIXME: This is kinda hackish //
         // Get all root dirs processed
+        log::info!("Finding duplicates.");
         let root_ids: Vec<_> = self
             .dir_tree
             .children_ids(&self.root_id)
@@ -478,12 +483,12 @@ impl DirTree {
             for id in self
                 .dir_tree
                 .traverse_post_order_ids(root_id)
-                .expect("Could not traverse tree for {root_id}")
+                .expect(&format!("Could not traverse tree for {root_id:?}"))
             {
                 let node = self
                     .dir_tree
                     .get(&id)
-                    .expect("Could not get a node with id {id:?}.");
+                    .expect(&format!("Could not get a node with id {id:?}."));
                 match &mut *node.data().borrow_mut() {
                     NodeType::File(entry) => {
                         DirTree::_add_duplicates_to_file_entry(id, entry, &self.duplicate_table);
@@ -501,12 +506,12 @@ impl DirTree {
             for id in self
                 .dir_tree
                 .traverse_post_order_ids(root_id)
-                .expect("Could not traverse tree for {root_id}")
+                .expect(&format!("Could not traverse tree for {root_id:?}"))
             {
                 let node = self
                     .dir_tree
                     .get(&id)
-                    .expect("Could not get a node with id {id:?}.");
+                    .expect(&format!("Could not get a node with id {id:?}."));
                 if let NodeType::Dir(node) = &mut *node.data().borrow_mut() {
                     self._filter_dir_duplicates(&id, node);
                     self._set_dir_size(&id, node);
@@ -560,6 +565,7 @@ impl DirTree {
         // FIXME: Handle empty dirs - If a dir contains empty dirs we might consider it duplicate
         // to another dir with the same empty dirs. Could be solved similarly to symlinks. //
         // FIXME: Handle symlinks correctly.
+        log::info!("Getting possible duplicates for: {:?}", dir_node.path);
         let mut children = self
             .dir_tree
             .children(node_id)
@@ -637,6 +643,7 @@ impl DirTree {
     /// `node` - node whose size is being set
     // FIXME: This is not accurate (maybe due to the constant DIR_SIZE?)
     fn _set_dir_size(&self, node_id: &NodeId, node: &mut DirNode) {
+        log::info!("Setting dir size for: {:?}", node.path);
         let children = self
             .dir_tree
             .children(node_id)
@@ -680,6 +687,7 @@ impl DirTree {
     /// * `node` - node whose duplicates should be filtered
     /// `node_id` should be id of `node`.
     fn _filter_dir_duplicates(&self, node_id: &NodeId, node: &mut DirNode) {
+        log::info!("Filtering duplicates for: {:?}", node.path);
         node.duplicates
             .retain(|x| self._is_duplication_mutual(node_id, &x.node_id));
     }
@@ -693,7 +701,7 @@ impl DirTree {
         let other_node = self
             .dir_tree
             .get(other_id)
-            .expect("Could not reach node {other_id}")
+            .expect(&format!("Could not reach node {other_id:?}"))
             .data()
             .borrow();
         if let Some(hs) = other_node.duplicates() {
