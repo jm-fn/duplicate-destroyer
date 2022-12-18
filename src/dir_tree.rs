@@ -369,13 +369,13 @@ impl DirTree {
                     }
 
                 // item is a file
-                } else {
+                } else if metadata.is_file() {
                     // Symlinks get extra treatment
                     if metadata.is_symlink() {
                         let symlink_node = NodeType::Symlink(SymlinkNode { path: name });
                         self.insert_node(symlink_node, parent_node);
 
-                    // Item is regular nonempty file
+                    // Item is regular file
                     } else {
                         match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
                             Ok(checksum) => {
@@ -402,6 +402,17 @@ impl DirTree {
                             }
                         };
                     }
+                // item is not a dir nor a regular file
+                // FIXME: This is here because of named pipes, somehow resolve this so you can get
+                //        duplicates...
+                } else {
+                    log::warn!("File is not a dir nor file: {name:?}");
+                    let e = std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Can not process named pipes.",
+                    );
+                    let inac_node = NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
+                    self.insert_node(inac_node, parent_node);
                 }
             }
 
@@ -426,7 +437,9 @@ impl DirTree {
     fn insert_node(&mut self, node: NodeType, parent_node: &NodeId) -> NodeId {
         self.dir_tree
             .insert(Node::new(RefCell::new(node)), UnderNode(parent_node))
-            .expect("Could not a insert node under this node: {parent_node:?}")
+            .expect(&format!(
+                "Could not a insert node under this node: {parent_node:?}"
+            ))
     }
 
     /// Prints the dirtree structure.
