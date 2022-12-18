@@ -572,7 +572,11 @@ impl DirTree {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.len() == 0 => return, // child node has no duplicates, so dir not
                 // duplicate
-                Some(hs) => hs.iter().map(|x| self._get_parent_table_data(x)).collect(),
+                Some(hs) => hs
+                    .iter()
+                    .map(|x| self._get_parent_table_data(x))
+                    .filter_map(|x| x)
+                    .collect(),
             };
         } else {
             // No child nodes, nothing to do...
@@ -585,7 +589,11 @@ impl DirTree {
             let parent_duplicates: HashSet<TableData> = match data.duplicates() {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.len() == 0 => return, // child node has no duplicates, dir not dupl.
-                Some(hs) => hs.iter().map(|x| self._get_parent_table_data(x)).collect(),
+                Some(hs) => hs
+                    .iter()
+                    .map(|x| self._get_parent_table_data(x))
+                    .filter_map(|x| x)
+                    .collect(),
             };
             result.retain(|x| parent_duplicates.contains(x))
         }
@@ -606,22 +614,17 @@ impl DirTree {
     ///
     /// # Arguments
     /// * `data` - Data of a node whose parent data should be returned
-    fn _get_parent_table_data(&self, data: &TableData) -> TableData {
-        let parent_path = Path::new(&data.path)
-            .parent()
-            .expect("Could not get parent path of {data.path}")
-            .as_os_str()
-            .to_owned();
-        let parent_id = self
-            .dir_tree
-            .get(&data.node_id)
-            .unwrap()
-            .parent()
-            .expect("Could not get parent id of {data.node_id}.")
-            .to_owned();
-        TableData {
-            path: parent_path,
-            node_id: parent_id,
+    fn _get_parent_table_data(&self, data: &TableData) -> Option<TableData> {
+        let parent_path = Path::new(&data.path).parent();
+        let parent_id = self.dir_tree.get(&data.node_id).unwrap().parent();
+
+        // Return None if we are at topmost path or node.
+        match (parent_path, parent_id) {
+            (Some(path), Some(id)) => Some(TableData {
+                path: path.as_os_str().to_owned(),
+                node_id: id.to_owned(),
+            }),
+            _ => None,
         }
     }
 
