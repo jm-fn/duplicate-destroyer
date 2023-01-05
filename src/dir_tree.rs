@@ -404,12 +404,6 @@ impl DirTree {
                 // item is a file
                 } else if metadata.is_file() {
                     // Symlinks get extra treatment
-                    if metadata.is_symlink() {
-                        let symlink_node = NodeType::Symlink(SymlinkNode { path: name });
-                        self.insert_node(symlink_node, parent_node);
-
-                    // Item is regular file
-                    } else {
                         match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
                             Ok(checksum) => {
                                 let node = NodeType::File(FileNode {
@@ -434,18 +428,22 @@ impl DirTree {
                                 self.insert_node(inac_node, parent_node);
                             }
                         };
-                    }
-                // item is not a dir nor a regular file
-                // FIXME: This is here because of named pipes, somehow resolve this so you can get
-                //        duplicates...
                 } else {
-                    log::warn!("File is not a dir nor file: {name:?}");
-                    let e = std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Can not process named pipes.",
-                    );
-                    let inac_node = NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
-                    self.insert_node(inac_node, parent_node);
+                    if metadata.is_symlink() {
+                        let symlink_node = NodeType::Symlink(SymlinkNode { path: name });
+                        self.insert_node(symlink_node, parent_node);
+
+                    // File is just weird. (Probably named pipe though...)
+                    // FIXME: Somehow get duplicates for named pipes as well?
+                    } else {
+                        log::warn!("File is not a dir nor file: {name:?}");
+                        let e = std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "Can not process named pipes.",
+                        );
+                        let inac_node = NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
+                        self.insert_node(inac_node, parent_node);
+                    }
                 }
             }
 
@@ -806,7 +804,7 @@ mod tests {
         let dt = DirTree::new();
         let mut out = String::new();
         dt.print(&mut out);
-        let expected_tree = "Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} })\n";
+        let expected_tree = "RefCell { value: Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} }) }\n";
         assert_eq!(expected_tree, out);
     }
 }
