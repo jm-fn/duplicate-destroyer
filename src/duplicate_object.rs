@@ -77,7 +77,7 @@ impl ContEnum {
 
 /// Placeholder for Duplicate Destroyer Error.
 /// Maybe unnecessary?
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct DuDeError {
     error: String,
 }
