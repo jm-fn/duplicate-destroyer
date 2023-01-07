@@ -15,20 +15,50 @@
 //! To get the duplicates of an item we check the value corresponding to the partial checksum and if there are
 //! multiple entries, we get the vector containing the specified item.
 use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+use threadpool::ThreadPool;
 
 use crate::checksum::get_checksum;
 use crate::dir_tree::TableData;
 
+type PartialChecksum = String;
+type Checksum = String;
+
 #[derive(Debug)]
 pub(crate) struct DuplicateTable {
     table: HashMap<String, DTEntry>,
+    threadpool: Option<ThreadPool>,
+    checksum_rx: Receiver<(PartialChecksum, Checksum, TableData)>,
+    checksum_tx: Sender<(PartialChecksum, Checksum, TableData)>,
+    job_counter: u32, // Counts if DT got a checksum for each job created
+    multithreaded: bool,
 }
 
 impl DuplicateTable {
     /// Create new empty DuplicateTable
-    pub(crate) fn new() -> Self {
+    ///
+    /// # Arguments
+    /// * `num_threads` - number of threads to be created by duplicate table
+    pub(crate) fn new(num_threads: usize) -> Self {
+        // Create threadpool if num_threads > 0
+        let mut threadpool = None;
+        let mut multithreaded = false;
+
+        if !(num_threads == 0) {
+            threadpool = Some(ThreadPool::new(num_threads));
+            multithreaded = true;
+        }
+
+        let (checksum_tx, checksum_rx) = channel::<(PartialChecksum, Checksum, TableData)>();
+
         DuplicateTable {
             table: HashMap::new(),
+            threadpool,
+            multithreaded,
+            checksum_rx,
+            checksum_tx,
+            job_counter: 0,
         }
     }
 
@@ -38,6 +68,11 @@ impl DuplicateTable {
     /// `part_checksum` - partial checksum of the file
     /// `data` - table data corresponding to the file
     pub(crate) fn register_item(&mut self, part_checksum: String, data: TableData) {
+        // Stop early if any thread panicked
+        if self.multithreaded && self.threadpool.as_ref().unwrap().panic_count() > 0 {
+            panic!("There is at least one panicked checksum thread.");
+        }
+
         match self.table.get(&part_checksum) {
             // There is single entry for part_checksum key
             Some(DTEntry::Single(_)) => {
@@ -58,21 +93,76 @@ impl DuplicateTable {
                 self._add_item(part_checksum, data);
             }
 
-            // Table doesn't have an entry for part_checksum key
+            // Table doesn't have an entry for part_checksum key yet
             None => {
                 self.table.insert(part_checksum, DTEntry::Single(data));
             }
         }
     }
 
+    /// Makes sure the table is finished if multithreading is on
+    pub(crate) fn finalise(&mut self) {
+        if self.multithreaded {
+            log::debug!("Waiting for jobs in duplicate table.");
+            // Wait for all jobs to finish
+            self.threadpool.as_ref().unwrap().join();
+            log::debug!("All jobs in dupllicate table finished");
+
+            // Panic if any thread panicked
+            if self.threadpool.as_ref().unwrap().panic_count() > 0 {
+                panic!("There is at least one panicked checksum thread.");
+            }
+
+            // Add all calculated checksums to dupl. table
+            for (part_checksum, checksum, entry) in
+                self.checksum_rx
+                    .try_iter()
+                    .collect::<Vec<(PartialChecksum, Checksum, TableData)>>()
+            {
+                log::trace!("Adding {:?} to mult entries", entry.path());
+                self._add_to_mult_entries(part_checksum, checksum, entry);
+            }
+            log::trace!("Done adding checksums to duplicate table.");
+
+            // Panic if we are missing any checksum
+            if self.job_counter > 0 {
+                panic!("There were more jobs created ")
+            }
+        }
+    }
+
     /// Calculate full checksum and add item to multiple-item entry
+    ///
+    /// If the table is multithreaded creates a job to calculate the checksum, otherwise calculates
+    /// checksum and adds the entry to duplicate table.
     ///
     /// # Arguments
     /// * `part_checksum` - partial checksum of the item
     /// * `entry` - entry data
     fn _add_item(&mut self, part_checksum: String, entry: TableData) {
-        let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
-        self._add_to_mult_entries(part_checksum, checksum, entry);
+        if self.multithreaded {
+            self._add_job(part_checksum, entry);
+        } else {
+            let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
+            self._add_to_mult_entries(part_checksum, checksum, entry);
+        }
+    }
+
+    /// Add a job to calculate the checksum of the entry to the threadpool
+    ///
+    /// # Arguments
+    /// * `part_checksum` - partial checksum of the item
+    /// * `entry` - entry data
+    fn _add_job(&mut self, part_checksum: String, entry: TableData) {
+        log::debug!("Adding job for {:?}", entry.path());
+        self.job_counter += 1;
+        let checksum_tx = self.checksum_tx.clone();
+        self.threadpool.as_ref().unwrap().execute(move || {
+            let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
+            checksum_tx
+                .send((part_checksum, checksum, entry))
+                .expect("Could not send data.");
+        })
     }
 
     /// Add item with known full checksum to multiple-item entry
@@ -85,6 +175,9 @@ impl DuplicateTable {
     /// # Panics
     /// Panics if the value at `partial_checksum` is not of type MultipleEntries
     fn _add_to_mult_entries(&mut self, part_checksum: String, checksum: String, entry: TableData) {
+        if self.multithreaded {
+            self.job_counter -= 1;
+        }
         if let Some(DTEntry::Multiple(me)) = self.table.get_mut(&part_checksum) {
             match me.hashes.get_mut(&checksum) {
                 Some(v) => {

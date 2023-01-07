@@ -106,7 +106,10 @@ pub(crate) struct DirTree {
 
 impl DirTree {
     /// Create new empty DirTree
-    pub fn new() -> Self {
+    ///
+    /// # Arguments
+    /// * `num_threads` - number of threads to be created in duplicate table
+    pub fn new(num_threads: usize) -> Self {
         let mut tree = Tree::new();
         let root_node = NodeType::Dir(DirNode {
             path: "ROOT_NODE".into(),
@@ -119,7 +122,7 @@ impl DirTree {
         DirTree {
             dir_tree: tree,
             root_id,
-            duplicate_table: DuplicateTable::new(),
+            duplicate_table: DuplicateTable::new(num_threads),
         }
     }
 
@@ -133,7 +136,7 @@ impl DirTree {
     ///
     /// # Arguments
     /// `paths` - Vector of paths where the duplicates should be searched. Can be paths of files
-    /// and directories.
+    /// or directories.
     pub(crate) fn add_directories<T: WithMetadata>(&mut self, dirs: Vec<T>) {
         for dir in dirs {
             log::info!("Adding directory {:?} to DirTree.", dir.filepath());
@@ -661,6 +664,10 @@ impl DirTree {
         }
     }
 
+    pub(crate) fn finalise(&mut self) {
+        self.duplicate_table.finalise();
+    }
+
     /// Set the size of DirNode
     ///
     /// Goes through all the children of DirNode and calculates its size.
@@ -801,7 +808,7 @@ mod tests {
 
     #[test]
     fn dirtree_new_test() {
-        let dt = DirTree::new();
+        let dt = DirTree::new(0);
         let mut out = String::new();
         dt.print(&mut out);
         let expected_tree = "RefCell { value: Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} }) }\n";

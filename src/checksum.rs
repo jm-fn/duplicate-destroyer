@@ -10,6 +10,7 @@ use blake2::{Blake2b512, Digest};
 /// # Arguments
 /// * `path` - path to the file to be checksummed
 pub(crate) fn get_checksum(path: &OsString) -> Result<String> {
+    log::trace!("Getting checksum for {:?}", path);
     let mut hasher = Blake2b512::new();
     let mut buffer = [0u8; 1024];
 

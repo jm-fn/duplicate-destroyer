@@ -21,11 +21,13 @@ use duplicate_object::*;
 #[cfg(not(test))]
 pub fn get_duplicates(directories: Vec<OsString>, mut options: HashMap<String, u64>) -> Result<Vec<DuplicateObject>, DuDeError> {
 
-    let mut tree = dir_tree::DirTree::new();
+    let num_threads: usize = options.remove("num_threads").unwrap_or(0) as usize;
+    let mut tree = dir_tree::DirTree::new(num_threads);
     tree.add_directories(directories);
 
     log::debug!("Finished adding directories");
     let min_size = options.remove("min_size").unwrap_or(0);
+    tree.finalise();
     let mut duplicates = tree.get_duplicates(min_size);
     duplicates.sort_by_key(|x| x.size);
     duplicates.reverse();

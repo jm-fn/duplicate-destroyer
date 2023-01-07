@@ -29,6 +29,7 @@
 //! ```
 //! will delete "path/to/dir/some_dir/A" in our example. (This is not implemented yet.)
 
+use std::cmp::max;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt::Display;
@@ -58,6 +59,10 @@ struct Args {
     /// Minimul size of duplicates considered (can have a metric prefix) [100]
     #[clap(short, long)]
     minimum_size: Option<String>,
+
+    /// Number of jobs that run simultaneously
+    #[clap(short, long)]
+    jobs: Option<usize>,
 }
 
 /// Actions possible for duplicate files
@@ -107,6 +112,12 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // Get number of threads
+    let mut thread_num = 0;
+    if let Some(num) = args.jobs {
+        thread_num = max(num as i64 - 1, 0);
+    }
+
     log::info!("Minimum size of duplicates considered is: {minimum_size}");
 
     log::trace!("Got directories:");
@@ -117,6 +128,7 @@ fn main() -> io::Result<()> {
     // FIXME: This should probably have its own struct
     let mut options = HashMap::new();
     options.insert("min_size".to_string(), minimum_size);
+    options.insert("num_threads".to_string(), thread_num as u64);
 
     let duplicates = duplicate_destroyer::get_duplicates(args.path, options).unwrap();
 
