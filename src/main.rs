@@ -75,6 +75,7 @@ enum Actions {
     ReplaceWithHardlink,
     ReplaceWithSoftlink,
     Nothing,
+    Quit
 }
 
 /// Stores action and vector of file numbers of files that are acted upon
@@ -255,7 +256,7 @@ fn get_action(file_num: usize) -> ActionTuple {
     let max_retries = 2u32;
     // FIXME: Get this string from Actions impl? //
     println!(
-        "[O]pen, Open [F]older, [D]elete, ReplaceWith[H]ardlink, ReplaceWith[S]oftlink, [N]othing"
+        "[O]pen, Open [F]older, [D]elete, ReplaceWith[H]ardlink, ReplaceWith[S]oftlink, [N]othing, [Q]uit"
     );
     for i in 0..max_retries {
         let mut input = String::new();
@@ -304,7 +305,7 @@ fn _print_action_input_err(iteration: u32, max_retries: u32, message: String) {
 // TODO: Add check that actions have files if applicable?
 fn _parse_action_input(input: &str) -> Result<ActionTuple, String> {
     log::trace!("Got action input {input}");
-    let re = Regex::new(r"(?P<action>[OFDHSN])(?P<files>(\s+\d+)*)$").unwrap();
+    let re = Regex::new(r"(?P<action>[OFDHSNQ])(?P<files>(\s+\d+)*)$").unwrap();
     let captures = re.captures(&input);
     if let Some(cap) = captures {
         let action_rep = cap.name("action").unwrap().as_str();
@@ -315,6 +316,7 @@ fn _parse_action_input(input: &str) -> Result<ActionTuple, String> {
             "H" => Actions::ReplaceWithHardlink,
             "S" => Actions::ReplaceWithSoftlink,
             "N" => Actions::Nothing,
+            "Q" => Actions::Quit,
             &_ => panic!("Error parsing"),
         };
         // Get parsed files
@@ -353,6 +355,7 @@ fn execute_action(action: &Actions, files: Vec<&OsString>) {
         }
 
         Actions::Nothing => {}
+        Actions::Quit => std::process::exit(0),
 
         _ => {
             println!("This is not yet implemented... ");
