@@ -29,7 +29,6 @@ use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
 
 use crate::checksum::get_partial_checksum;
 use crate::duplicate_table::DuplicateTable;
-use crate::ContEnum;
 use crate::DuplicateObject;
 
 const CHCKSUM_LENGTH: usize = 1024;
@@ -46,7 +45,7 @@ struct FileNode {
     pub path: OsString,
     pub size: u64,
     pub part_checksum: String,
-    pub duplicates: HashSet<TableData>,
+    pub duplicates: HashSet<NodeId>,
 }
 
 /// Struct with metadata for directories
@@ -54,7 +53,7 @@ struct FileNode {
 struct DirNode {
     pub path: OsString,
     pub size: Option<u64>,
-    pub duplicates: HashSet<TableData>,
+    pub duplicates: HashSet<NodeId>,
 }
 
 /// Struct for inaccessible files
@@ -82,12 +81,22 @@ enum NodeType {
 
 impl NodeType {
     /// Get duplicates of the node
-    fn duplicates(&self) -> Option<&HashSet<TableData>> {
+    fn duplicates(&self) -> Option<&HashSet<NodeId>> {
         match self {
             Self::File(val) => Some(&val.duplicates),
             Self::Dir(val) => Some(&val.duplicates),
             Self::Symlink(_) => None,
             Self::Inaccessible(_) => None,
+        }
+    }
+
+    /// Get path of node
+    fn path(&self) -> &OsString {
+        match self {
+            Self::File(val) => &val.path,
+            Self::Dir(val) => &val.path,
+            Self::Symlink(val) => &val.path,
+            Self::Inaccessible(val) => &val.path,
         }
     }
 }
@@ -263,6 +272,17 @@ impl DirTree {
         }
     }
 
+    /// Get path of node with `node_id`
+    fn _get_node_path(&self, node_id: &NodeId) -> OsString {
+        let node = &*self
+            .dir_tree
+            .get(node_id)
+            .expect(&format!("Could not find node: {node_id:?}"))
+            .data()
+            .borrow();
+        node.path().to_owned()
+    }
+
     /// Add duplicate group to the list of duplicates
     ///
     /// We first check if one of the paths in the duplicate group is not already present in
@@ -295,7 +315,7 @@ impl DirTree {
         &self,
         path: OsString,
         size: u64,
-        data: HashSet<TableData>,
+        data: HashSet<NodeId>,
         duplicates: &mut Vec<DuplicateObject>,
         contained: &mut Vec<DuplicateObject>,
     ) {
@@ -315,7 +335,8 @@ impl DirTree {
         let mut is_cont: Vec<DuplicateObject> = vec![];
         let mut cont: Vec<DuplicateObject> = vec![];
 
-        let paths: Vec<&OsString> = data.iter().map(|d| &d.path).collect();
+        let paths: Vec<_> = data.iter().map(|x| self._get_node_path(&x)).collect();
+        //let paths: Vec<&OsString> = data.iter().map(|d| &d.path).collect();
         // FIXME: can I somehow do this without cloning duplicate objects?
         for path in paths.iter() {
             let (mut p_is_cont, mut p_cont): (Vec<_>, Vec<_>) = duplicates
@@ -407,30 +428,30 @@ impl DirTree {
                 // item is a file
                 } else if metadata.is_file() {
                     // Symlinks get extra treatment
-                        match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
-                            Ok(checksum) => {
-                                let node = NodeType::File(FileNode {
-                                    path: name,
-                                    size: metadata.len(),
-                                    part_checksum: checksum.clone(),
-                                    duplicates: HashSet::new(),
-                                });
-                                let node_id = self.insert_node(node, parent_node);
-                                self.duplicate_table.register_item(
-                                    checksum,
-                                    TableData {
-                                        path: item.filepath(),
-                                        node_id,
-                                    },
-                                );
-                            }
-                            Err(e) => {
-                                log::info!("Could not access dir {:?}: {}", name, e);
-                                let inac_node =
-                                    NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
-                                self.insert_node(inac_node, parent_node);
-                            }
-                        };
+                    match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
+                        Ok(checksum) => {
+                            let node = NodeType::File(FileNode {
+                                path: name,
+                                size: metadata.len(),
+                                part_checksum: checksum.clone(),
+                                duplicates: HashSet::new(),
+                            });
+                            let node_id = self.insert_node(node, parent_node);
+                            self.duplicate_table.register_item(
+                                checksum,
+                                TableData {
+                                    path: item.filepath(),
+                                    node_id,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            log::info!("Could not access dir {:?}: {}", name, e);
+                            let inac_node =
+                                NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
+                            self.insert_node(inac_node, parent_node);
+                        }
+                    };
                 } else {
                     if metadata.is_symlink() {
                         let symlink_node = NodeType::Symlink(SymlinkNode { path: name });
@@ -444,7 +465,8 @@ impl DirTree {
                             std::io::ErrorKind::Other,
                             "Can not process named pipes.",
                         );
-                        let inac_node = NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
+                        let inac_node =
+                            NodeType::Inaccessible(InaccessibleNode { path: name, err: e });
                         self.insert_node(inac_node, parent_node);
                     }
                 }
@@ -576,7 +598,10 @@ impl DirTree {
         match duplicates {
             Err(e) => panic!("Getting duplicates failed: {e}"),
             Ok(dupl) => {
-                entry.duplicates = dupl;
+                entry.duplicates = dupl
+                    .into_iter()
+                    .map(|table_data| table_data.node_id)
+                    .collect();
             }
         }
     }
@@ -600,7 +625,7 @@ impl DirTree {
             .dir_tree
             .children(node_id)
             .expect("Could not get dirtree children.");
-        let mut result = HashSet::new();
+        let mut result: HashSet<NodeId>;
         // Get first set of duplicates
         if let Some(child) = children.next() {
             let data = child.data().borrow();
@@ -622,7 +647,7 @@ impl DirTree {
         // For each child get intersection of duplicates
         for child in children {
             let data = child.data().borrow();
-            let parent_duplicates: HashSet<TableData> = match data.duplicates() {
+            let parent_duplicates: HashSet<NodeId> = match data.duplicates() {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.len() == 0 => return, // child node has no duplicates, dir not dupl.
                 Some(hs) => hs
@@ -636,12 +661,7 @@ impl DirTree {
 
         // If we have e.g. a dir that has only a file and its copy, we would get that the dir
         // itself is its duplicate. Remove such case.
-        result.retain(|x| {
-            !(*x == TableData {
-                path: dir_node.path.clone(),
-                node_id: node_id.to_owned(),
-            })
-        });
+        result.retain(|x| x != node_id);
 
         dir_node.duplicates = result;
     }
@@ -650,16 +670,12 @@ impl DirTree {
     ///
     /// # Arguments
     /// * `data` - Data of a node whose parent data should be returned
-    fn _get_parent_table_data(&self, data: &TableData) -> Option<TableData> {
-        let parent_path = Path::new(&data.path).parent();
-        let parent_id = self.dir_tree.get(&data.node_id).unwrap().parent();
+    fn _get_parent_table_data(&self, data: &NodeId) -> Option<NodeId> {
+        let parent_id = self.dir_tree.get(data).unwrap().parent();
 
-        // Return None if we are at topmost path or node.
-        match (parent_path, parent_id) {
-            (Some(path), Some(id)) => Some(TableData {
-                path: path.as_os_str().to_owned(),
-                node_id: id.to_owned(),
-            }),
+        // Return None if we are at topmost node.
+        match parent_id {
+            Some(id) if *id != self.root_id => Some(id.to_owned()),
             _ => None,
         }
     }
@@ -723,7 +739,7 @@ impl DirTree {
     fn _filter_dir_duplicates(&self, node_id: &NodeId, node: &mut DirNode) {
         log::info!("Filtering duplicates for: {:?}", node.path);
         node.duplicates
-            .retain(|x| self._is_duplication_mutual(node_id, &x.node_id));
+            .retain(|x| self._is_duplication_mutual(node_id, &x));
     }
 
     /// Check whether node with `first_id` is in duplicates of node with `other_id`
@@ -739,7 +755,7 @@ impl DirTree {
             .data()
             .borrow();
         if let Some(hs) = other_node.duplicates() {
-            hs.iter().map(|x| &x.node_id).any(|x| x == first_id)
+            hs.iter().map(|x| x).any(|x| x == first_id)
         } else {
             false
         }
@@ -811,7 +827,8 @@ mod tests {
         let dt = DirTree::new(0);
         let mut out = String::new();
         dt.print(&mut out);
-        let expected_tree = "RefCell { value: Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} }) }\n";
+        let expected_tree =
+            "RefCell { value: Dir(DirNode { path: \"ROOT_NODE\", size: None, duplicates: {} }) }\n";
         assert_eq!(expected_tree, out);
     }
 }
