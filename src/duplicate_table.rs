@@ -77,9 +77,8 @@ impl DuplicateTable {
             // There is single entry for part_checksum key
             Some(DTEntry::Single(_)) => {
                 // change value type to multiple entries and add both single entries
-                let single_entry = self
-                    .table
-                    .insert(part_checksum.clone(), DTEntry::new_multi_entry());
+                let single_entry =
+                    self.table.insert(part_checksum.clone(), DTEntry::new_multi_entry());
                 if let Some(DTEntry::Single(se)) = single_entry {
                     self._add_item(part_checksum.clone(), se);
                 } else {
@@ -115,9 +114,7 @@ impl DuplicateTable {
 
             // Add all calculated checksums to dupl. table
             for (part_checksum, checksum, entry) in
-                self.checksum_rx
-                    .try_iter()
-                    .collect::<Vec<(PartialChecksum, Checksum, TableData)>>()
+                self.checksum_rx.try_iter().collect::<Vec<(PartialChecksum, Checksum, TableData)>>()
             {
                 log::trace!("Adding {:?} to mult entries", entry.path());
                 self._add_to_mult_entries(part_checksum, checksum, entry);
@@ -159,9 +156,7 @@ impl DuplicateTable {
         let checksum_tx = self.checksum_tx.clone();
         self.threadpool.as_ref().unwrap().execute(move || {
             let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
-            checksum_tx
-                .send((part_checksum, checksum, entry))
-                .expect("Could not send data.");
+            checksum_tx.send((part_checksum, checksum, entry)).expect("Could not send data.");
         })
     }
 
@@ -246,9 +241,7 @@ enum DTEntry {
 
 impl DTEntry {
     fn new_multi_entry() -> DTEntry {
-        DTEntry::Multiple(MultipleEntries {
-            hashes: HashMap::new(),
-        })
+        DTEntry::Multiple(MultipleEntries { hashes: HashMap::new() })
     }
 }
 

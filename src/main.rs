@@ -75,7 +75,7 @@ enum Actions {
     ReplaceWithHardlink,
     ReplaceWithSoftlink,
     Nothing,
-    Quit
+    Quit,
 }
 
 /// Stores action and vector of file numbers of files that are acted upon
@@ -92,10 +92,7 @@ fn main() -> io::Result<()> {
 
     if args.path.len() == 0 {
         log::error!("Please specify at least one directory.");
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "No directory specified.",
-        ));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "No directory specified."));
     }
 
     // Get minimum size of elements of duplicate groups
@@ -153,14 +150,9 @@ fn _print_statistics(duplicates: &Vec<DuplicateObject>) {
     println!("{}", "-".repeat(40));
     let num_groups = duplicates.len();
     println!("Found {} groups.", num_groups);
-    let max_saved_space: u64 = duplicates
-        .iter()
-        .map(|x| x.size * (x.duplicates.len() - 1) as u64)
-        .sum();
-    println!(
-        "Max saved space in this iteration: {}",
-        get_human_readable_size(max_saved_space)
-    );
+    let max_saved_space: u64 =
+        duplicates.iter().map(|x| x.size * (x.duplicates.len() - 1) as u64).sum();
+    println!("Max saved space in this iteration: {}", get_human_readable_size(max_saved_space));
     println!("{}", "-".repeat(40));
     println!("");
 }
@@ -371,17 +363,11 @@ fn open_file(file: &OsString) {
     log::trace!("Opening file {:?}", file);
 
     let file_str: String = file.to_owned().into_string().unwrap();
-    let out = Command::new("xdg-open")
-        .arg(file_str)
-        .output()
-        .expect("Could not execute xdg-open.");
+    let out = Command::new("xdg-open").arg(file_str).output().expect("Could not execute xdg-open.");
 
     // If opening failed, print stderr
     if !out.status.success() {
-        log::error!(
-            "Error opening file: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        log::error!("Error opening file: {}", String::from_utf8_lossy(&out.stderr));
     }
 }
 

@@ -13,14 +13,16 @@ mod duplicate_table;
 
 pub use duplicate_object::DuplicateObject;
 
-use std::ffi::OsString;
 use std::collections::HashMap;
+use std::ffi::OsString;
 
 use duplicate_object::*;
 
 #[cfg(not(test))]
-pub fn get_duplicates(directories: Vec<OsString>, mut options: HashMap<String, u64>) -> Result<Vec<DuplicateObject>, DuDeError> {
-
+pub fn get_duplicates(
+    directories: Vec<OsString>,
+    mut options: HashMap<String, u64>,
+) -> Result<Vec<DuplicateObject>, DuDeError> {
     let num_threads: usize = options.remove("num_threads").unwrap_or(0) as usize;
     let mut tree = dir_tree::DirTree::new(num_threads);
     tree.add_directories(directories);

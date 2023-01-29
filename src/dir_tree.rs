@@ -42,10 +42,10 @@ const DIR_SIZE: u64 = 4096;
 /// Enum for all the possible nodes in DirTree
 #[derive(Debug)]
 enum NodeType {
-    File{path: OsString, size: u64, part_checksum:String, duplicates: HashSet<NodeId>},
-    Dir{path: OsString, size: Option<u64>, duplicates: HashSet<NodeId>},
-    Inaccessible{path: OsString, err:std::io::Error},
-    Symlink{path: OsString},
+    File { path: OsString, size: u64, part_checksum: String, duplicates: HashSet<NodeId> },
+    Dir { path: OsString, size: Option<u64>, duplicates: HashSet<NodeId> },
+    Inaccessible { path: OsString, err: std::io::Error },
+    Symlink { path: OsString },
 }
 
 /// Enum to flag child and parent nodes of nodes that are in duplicate list. To enable keeping only
@@ -61,20 +61,20 @@ impl NodeType {
     /// Get duplicates of the node
     fn duplicates(&self) -> Option<&HashSet<NodeId>> {
         match *self {
-            Self::File{ref duplicates, ..} => Some(duplicates),
-            Self::Dir{ref duplicates, ..} => Some(duplicates),
-            Self::Symlink{..} => None,
-            Self::Inaccessible{..} => None,
+            Self::File { ref duplicates, .. } => Some(duplicates),
+            Self::Dir { ref duplicates, .. } => Some(duplicates),
+            Self::Symlink { .. } => None,
+            Self::Inaccessible { .. } => None,
         }
     }
 
     /// Get path of node
     fn path(&self) -> &OsString {
         match self {
-            Self::File{path, ..} => &path,
-            Self::Dir{path, ..} => &path,
-            Self::Symlink{path} => &path,
-            Self::Inaccessible{path, ..} => &path,
+            Self::File { path, .. } => &path,
+            Self::Dir { path, .. } => &path,
+            Self::Symlink { path } => &path,
+            Self::Inaccessible { path, .. } => &path,
         }
     }
 }
@@ -98,27 +98,16 @@ impl DirTree {
     /// * `num_threads` - number of threads to be created in duplicate table
     pub fn new(num_threads: usize) -> Self {
         let mut dir_tree = Tree::new();
-        let root_node = NodeType::Dir{
-            path: "ROOT_NODE".into(),
-            size: None,
-            duplicates: HashSet::new(),
-        };
-        let root_id = dir_tree
-            .insert(Node::new(RefCell::new(root_node)), AsRoot)
-            .unwrap();
+        let root_node =
+            NodeType::Dir { path: "ROOT_NODE".into(), size: None, duplicates: HashSet::new() };
+        let root_id = dir_tree.insert(Node::new(RefCell::new(root_node)), AsRoot).unwrap();
 
-        DirTree {
-            dir_tree,
-            root_id,
-            duplicate_table: DuplicateTable::new(num_threads),
-        }
+        DirTree { dir_tree, root_id, duplicate_table: DuplicateTable::new(num_threads) }
     }
 
     /// Prints the dirtree structure.
     pub(crate) fn print<W: Write>(self, w: &mut W) {
-        self.dir_tree
-            .write_formatted(w)
-            .expect("Error writing dir_tree");
+        self.dir_tree.write_formatted(w).expect("Error writing dir_tree");
     }
 
     /// Add directories (and files) to the DirTree
@@ -147,9 +136,7 @@ impl DirTree {
                 .children(&self.root_id)
                 .expect("Could not access root node in dir_tree.")
             {
-                if let NodeType::Inaccessible{path, err } =
-                    &*child.data().borrow()
-                {
+                if let NodeType::Inaccessible { path, err } = &*child.data().borrow() {
                     log::error!("Could not access directory {:?}: {}", path, err);
                 }
             }
@@ -179,11 +166,8 @@ impl DirTree {
 
     /// Get the RefCell contained in node with `node_id`.
     fn _get_node_data(&self, node_id: &NodeId) -> &RefCell<NodeType> {
-        let node_data = self
-            .dir_tree
-            .get(node_id)
-            .expect(&format!("Could not get node {node_id:?}"))
-            .data();
+        let node_data =
+            self.dir_tree.get(node_id).expect(&format!("Could not get node {node_id:?}")).data();
         node_data
     }
 
@@ -212,7 +196,7 @@ impl DirTree {
         let node: &NodeType = &*self._get_node_data(node_id).borrow();
         match node {
             // Node has no duplicates, search children
-            NodeType::Dir{duplicates: dir_duplicates, ..} if dir_duplicates.len() == 0 => {
+            NodeType::Dir { duplicates: dir_duplicates, .. } if dir_duplicates.len() == 0 => {
                 for child_id in self
                     .dir_tree
                     .children_ids(node_id)
@@ -222,7 +206,9 @@ impl DirTree {
                 }
             }
             // Node has duplicates, add it to dupl. list
-            NodeType::Dir{duplicates: dir_duplicates, size, path} if dir_duplicates.len() > 0 => {
+            NodeType::Dir { duplicates: dir_duplicates, size, path }
+                if dir_duplicates.len() > 0 =>
+            {
                 // Check that dir is not already present in some duplicate group
                 if !DirTree::_duplicates_contain_path(duplicates, path)
                     && size.expect("Dir without size should not have duplicates.") > min_size
@@ -237,10 +223,10 @@ impl DirTree {
                 }
             }
 
-            NodeType::File{duplicates: node_duplicates, size, path, ..} if node_duplicates.len() > 0  => {
-                if !DirTree::_duplicates_contain_path(duplicates, path)
-                    && *size > min_size
-                {
+            NodeType::File { duplicates: node_duplicates, size, path, .. }
+                if node_duplicates.len() > 0 =>
+            {
+                if !DirTree::_duplicates_contain_path(duplicates, path) && *size > min_size {
                     self._add_duplicates_to_list(
                         path.clone(),
                         size.to_owned(),
@@ -294,12 +280,7 @@ impl DirTree {
     ) {
         log::trace!("Adding {:?} to list of duplicates.", path);
         // If there is already a group with path in contained, do nothing
-        if (contained
-            .iter()
-            .map(|x| x.duplicates.iter())
-            .flatten()
-            .any(|x| *x == path))
-        {
+        if (contained.iter().map(|x| x.duplicates.iter()).flatten().any(|x| *x == path)) {
             return;
         }
 
@@ -323,10 +304,7 @@ impl DirTree {
                 p_is_cont.len() * p_cont.len() == 0,
                 "One path cannot be contained and contain duplicate group."
             ); // From transitivity of containing
-            assert!(
-                p_is_cont.len() <= 1,
-                "One path cannot be contained in more duplicate groups"
-            );
+            assert!(p_is_cont.len() <= 1, "One path cannot be contained in more duplicate groups");
             for d_obj in p_cont.into_iter().map(|(d_obj, cont)| d_obj) {
                 if !cont.contains(&d_obj) {
                     cont.push(d_obj)
@@ -375,7 +353,7 @@ impl DirTree {
                     log::info!("Reading dir: {name:?}");
                     match read_dir(&name) {
                         Ok(file_iter) => {
-                            let node = NodeType::Dir{
+                            let node = NodeType::Dir {
                                 path: name.clone(),
                                 size: None,
                                 duplicates: HashSet::new(),
@@ -392,8 +370,7 @@ impl DirTree {
                         // Dir not readable
                         Err(e) => {
                             log::info!("Could not access dir {:?}: {}", name, e);
-                            let inac_node =
-                                NodeType::Inaccessible{ path: name, err: e };
+                            let inac_node = NodeType::Inaccessible { path: name, err: e };
                             self._insert_node(inac_node, parent_node);
                         }
                     }
@@ -403,7 +380,7 @@ impl DirTree {
                     // Symlinks get extra treatment
                     match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
                         Ok(checksum) => {
-                            let node = NodeType::File{
+                            let node = NodeType::File {
                                 path: name,
                                 size: metadata.len(),
                                 part_checksum: checksum.clone(),
@@ -412,23 +389,19 @@ impl DirTree {
                             let node_id = self._insert_node(node, parent_node);
                             self.duplicate_table.register_item(
                                 checksum,
-                                TableData {
-                                    path: item.filepath(),
-                                    node_id,
-                                },
+                                TableData { path: item.filepath(), node_id },
                             );
                         }
                         Err(e) => {
                             log::info!("Could not access dir {:?}: {}", name, e);
-                            let inac_node =
-                                NodeType::Inaccessible{ path: name, err: e };
+                            let inac_node = NodeType::Inaccessible { path: name, err: e };
                             self._insert_node(inac_node, parent_node);
                         }
                     };
                 // item is not a file nor a dir.
                 } else {
                     if metadata.is_symlink() {
-                        let symlink_node = NodeType::Symlink{ path: name };
+                        let symlink_node = NodeType::Symlink { path: name };
                         self._insert_node(symlink_node, parent_node);
 
                     // File is just weird. (Probably named pipe though...)
@@ -439,8 +412,7 @@ impl DirTree {
                             std::io::ErrorKind::Other,
                             "Can not process named pipes.",
                         );
-                        let inac_node =
-                            NodeType::Inaccessible{ path: name, err: e };
+                        let inac_node = NodeType::Inaccessible { path: name, err: e };
                         self._insert_node(inac_node, parent_node);
                     }
                 }
@@ -449,7 +421,7 @@ impl DirTree {
             // Item is inaccessible
             Err(e) => {
                 log::info!("Could not access file {:?}: {}", name, e);
-                let inac_node = NodeType::Inaccessible{ path: name, err: e };
+                let inac_node = NodeType::Inaccessible { path: name, err: e };
                 self._insert_node(inac_node, parent_node);
             }
         }
@@ -467,9 +439,7 @@ impl DirTree {
     fn _insert_node(&mut self, node: NodeType, parent_node: &NodeId) -> NodeId {
         self.dir_tree
             .insert(Node::new(RefCell::new(node)), UnderNode(parent_node))
-            .expect(&format!(
-                "Could not a insert node under this node: {parent_node:?}"
-            ))
+            .expect(&format!("Could not a insert node under this node: {parent_node:?}"))
     }
 
     /// Get `NodeId`s of the topmost directories in the DirTree
@@ -504,10 +474,15 @@ impl DirTree {
             {
                 let node_data = self._get_node_data(&id);
                 match *node_data.borrow_mut() {
-                    NodeType::File{ref mut duplicates, ref part_checksum, ref path, ..} => {
-                        self._add_duplicates_to_file_entry(id, duplicates, part_checksum, path.to_owned());
+                    NodeType::File { ref mut duplicates, ref part_checksum, ref path, .. } => {
+                        self._add_duplicates_to_file_entry(
+                            id,
+                            duplicates,
+                            part_checksum,
+                            path.to_owned(),
+                        );
                     }
-                    NodeType::Dir{ref mut duplicates, ref path, ..} => {
+                    NodeType::Dir { ref mut duplicates, ref path, .. } => {
                         self._get_possible_dupl_for_dirs(&id, duplicates, path);
                     }
                     _ => {}
@@ -523,7 +498,9 @@ impl DirTree {
                 .expect(&format!("Could not traverse tree for {root_id:?}"))
             {
                 let node_data = self._get_node_data(&id);
-                if let NodeType::Dir{ref mut duplicates, ref mut size, ref path} = *node_data.borrow_mut() {
+                if let NodeType::Dir { ref mut duplicates, ref mut size, ref path } =
+                    *node_data.borrow_mut()
+                {
                     self._filter_dir_duplicates(&id, duplicates);
                     self._set_dir_size(&id, size, path);
                 }
@@ -547,22 +524,16 @@ impl DirTree {
         node_id: NodeId,
         node_duplicates: &mut HashSet<NodeId>,
         part_checksum: &str,
-        path: OsString
+        path: OsString,
     ) {
         // FIXME: Do this without cloning entry path? //
-        let data = TableData {
-            path,
-            node_id,
-        };
+        let data = TableData { path, node_id };
         let rec_duplicates = self.duplicate_table.get_duplicates(part_checksum, &data);
 
         match rec_duplicates {
             Err(e) => panic!("Getting duplicates failed: {e}"),
             Ok(dupl) => {
-                *node_duplicates = dupl
-                    .into_iter()
-                    .map(|table_data| table_data.node_id)
-                    .collect();
+                *node_duplicates = dupl.into_iter().map(|table_data| table_data.node_id).collect();
             }
         }
     }
@@ -579,15 +550,18 @@ impl DirTree {
     /// # Arguments
     /// * `node_id` - NodeId of the dir node whose duplicates we want
     /// * `dir_node` - data of the node whose duplicates we want
-    fn _get_possible_dupl_for_dirs(&self, node_id: &NodeId, node_duplicates: &mut HashSet<NodeId>, path: &OsString) {
+    fn _get_possible_dupl_for_dirs(
+        &self,
+        node_id: &NodeId,
+        node_duplicates: &mut HashSet<NodeId>,
+        path: &OsString,
+    ) {
         // FIXME: Handle empty dirs - If a dir contains empty dirs we might consider it duplicate
         // to another dir with the same empty dirs. Could be solved similarly to symlinks. //
         // FIXME: Handle symlinks correctly.
         log::info!("Getting possible duplicates for: {:?}", path);
-        let mut children = self
-            .dir_tree
-            .children(node_id)
-            .expect("Could not get dirtree children.");
+        let mut children =
+            self.dir_tree.children(node_id).expect("Could not get dirtree children.");
         let mut result: HashSet<NodeId>;
         // Get first set of duplicates
         if let Some(child) = children.next() {
@@ -596,11 +570,9 @@ impl DirTree {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.len() == 0 => return, // child node has no duplicates, so dir not
                 // duplicate
-                Some(hs) => hs
-                    .iter()
-                    .map(|x| self._get_parent_table_data(x))
-                    .filter_map(|x| x)
-                    .collect(),
+                Some(hs) => {
+                    hs.iter().map(|x| self._get_parent_table_data(x)).filter_map(|x| x).collect()
+                }
             };
         } else {
             // No child nodes, nothing to do...
@@ -613,11 +585,9 @@ impl DirTree {
             let parent_duplicates: HashSet<NodeId> = match data.duplicates() {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.len() == 0 => return, // child node has no duplicates, dir not dupl.
-                Some(hs) => hs
-                    .iter()
-                    .map(|x| self._get_parent_table_data(x))
-                    .filter_map(|x| x)
-                    .collect(),
+                Some(hs) => {
+                    hs.iter().map(|x| self._get_parent_table_data(x)).filter_map(|x| x).collect()
+                }
             };
             result.retain(|x| parent_duplicates.contains(x))
         }
@@ -657,31 +627,28 @@ impl DirTree {
     // FIXME: This is not accurate (maybe due to the constant DIR_SIZE?)
     fn _set_dir_size(&self, node_id: &NodeId, size: &mut Option<u64>, path: &OsString) {
         log::info!("Setting dir size for: {:?}", path);
-        let children = self
-            .dir_tree
-            .children(node_id)
-            .expect("Could not get dirtree children.");
+        let children = self.dir_tree.children(node_id).expect("Could not get dirtree children.");
         let mut result = 0u64;
 
         for child in children {
             match &*child.data().borrow() {
-                NodeType::File{size, ..} => {
+                NodeType::File { size, .. } => {
                     result += size;
                 }
                 // If size of subdir is known, add it. Otherwise, leave set to None
-                NodeType::Dir{size: Some(size), ..} => {
-                        result += size;
+                NodeType::Dir { size: Some(size), .. } => {
+                    result += size;
                 }
                 // Size of subdir is unknown, leave set to None
-                NodeType::Dir{size: None, ..} => {
+                NodeType::Dir { size: None, .. } => {
                     return;
                 }
                 // Size is unknown, leave set to None
-                NodeType::Inaccessible{..} => {
+                NodeType::Inaccessible { .. } => {
                     return;
                 }
                 // FIXME: Count symlink size
-                NodeType::Symlink{..} => {}
+                NodeType::Symlink { .. } => {}
             }
         }
 
@@ -721,11 +688,7 @@ impl DirTree {
     }
 
     fn _duplicates_contain_path(duplicates: &Vec<DuplicateObject>, path: &OsString) -> bool {
-        duplicates
-            .iter()
-            .map(|x| x.duplicates.iter())
-            .flatten()
-            .any(|x| *x == *path)
+        duplicates.iter().map(|x| x.duplicates.iter()).flatten().any(|x| *x == *path)
     }
 }
 

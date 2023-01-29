@@ -30,12 +30,9 @@ impl DuplicateObject {
     /// * ContEnum::Contains when self is contained in path
     pub fn contained(&self, path: &OsString) -> ContEnum {
         for do_path in &self.duplicates {
-            let do_str_path = do_path
-                .to_str()
-                .expect("The path {do_path:?} is not a valid UTF-8 string");
-            let str_path = path
-                .to_str()
-                .expect("The path {path:?} is not a valid UTF-8 string");
+            let do_str_path =
+                do_path.to_str().expect("The path {do_path:?} is not a valid UTF-8 string");
+            let str_path = path.to_str().expect("The path {path:?} is not a valid UTF-8 string");
             if str_path.contains(do_str_path) {
                 return ContEnum::IsContained;
             }
