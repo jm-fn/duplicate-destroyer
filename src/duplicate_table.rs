@@ -202,7 +202,7 @@ impl DuplicateTable {
     /// `entry` and `part_checksum` should be of the same file.
     pub(crate) fn get_duplicates(
         &self,
-        part_checksum: &String,
+        part_checksum: &str,
         entry: &TableData,
     ) -> Result<HashSet<TableData>, &str> {
         if let Some(val) = self.table.get(part_checksum) {
