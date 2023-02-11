@@ -1,5 +1,8 @@
+
 # Duplicate Destroyer
 Command line tool that finds duplicate directories and provides their basic handling.
+
+[![Tests](https://github.com/jm-fn/duplicate-destroyer/actions/workflows/tests.yml/badge.svg)](https://github.com/jm-fn/duplicate-destroyer/actions/workflows/tests.yml)
 
 ## The Pitch
 
