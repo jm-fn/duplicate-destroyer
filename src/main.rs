@@ -31,14 +31,18 @@
 
 use std::cmp::max;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::Display;
+use std::fs::File;
 use std::io;
+use std::io::prelude::*;
 use std::path::Path;
 use std::process::Command;
 
 use clap::Parser;
 use regex::Regex;
+use serde::Serialize;
 
 use duplicate_destroyer;
 use duplicate_destroyer::DuplicateObject;
@@ -63,6 +67,14 @@ struct Args {
     /// Number of jobs that run simultaneously
     #[clap(short, long)]
     jobs: Option<usize>,
+
+    /// Output the list of duplicates to a file in json format
+    #[clap(long, value_name = "FILE")]
+    json_file: Option<OsString>,
+
+    /// Disable interactive duplicate handling
+    #[clap(long)]
+    no_interactive: bool,
 }
 
 /// Actions possible for duplicate files
@@ -129,13 +141,21 @@ fn main() -> io::Result<()> {
     options.insert("num_threads".to_string(), thread_num as u64);
 
     let duplicates = duplicate_destroyer::get_duplicates(args.path, options).unwrap();
-
+    //let dupl_strings: Vec<_> = duplicates.iter().map(|x| x.duplicates.iter().map(|x| x.to_owned().into_string().unwrap_or(String::from("Error decoding path."))).collect::<HashSet<String>>()).collect();
     _print_statistics(&duplicates);
 
-    let num_groups = duplicates.len();
-    for (index, group) in duplicates.into_iter().enumerate() {
-        println!("Group {}/{}", index + 1, num_groups);
-        handle_group(group);
+    if let Some(json_file) = args.json_file {
+        let serialized = serde_json::to_string(&duplicates).unwrap();
+        let mut file = File::create(json_file)?;
+        write!(file, "{}", serialized).expect("An error occured when writing output to file.");
+    }
+
+    if !args.no_interactive {
+        let num_groups = duplicates.len();
+        for (index, group) in duplicates.into_iter().enumerate() {
+            println!("Group {}/{}", index + 1, num_groups);
+            handle_group(group);
+        }
     }
 
     Ok(())

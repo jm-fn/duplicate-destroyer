@@ -1,13 +1,32 @@
+use serde::ser::{SerializeSeq, Serializer};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::ffi::OsString;
 
 /// Holds data of duplicate groups that are returned by DuDe.
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 pub struct DuplicateObject {
     /// Set of all duplicate paths in group
+    #[serde(serialize_with = "osstring_serialize")]
     pub duplicates: HashSet<OsString>,
     /// Size of one element in duplicates
+    #[serde(rename = "elementSize")]
     pub size: u64,
+}
+
+fn osstring_serialize<S>(hs: &HashSet<OsString>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut seq = s.serialize_seq(Some(hs.len()))?;
+    for item in hs.iter() {
+        let stringy: String = item
+            .to_owned()
+            .into_string()
+            .unwrap_or_else(|osstr| format!("Error decoding this: {:?}", osstr));
+        seq.serialize_element(&stringy)?;
+    }
+    seq.end()
 }
 
 impl DuplicateObject {
