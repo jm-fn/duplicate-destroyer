@@ -501,7 +501,7 @@ impl DirTree {
                 if let NodeType::Dir { ref mut duplicates, ref mut size, ref path } =
                     *node_data.borrow_mut()
                 {
-                    self._filter_dir_duplicates(&id, duplicates);
+                    self._filter_dir_duplicates(&id, duplicates, path);
                     self._set_dir_size(&id, size, path);
                 }
             }
@@ -668,8 +668,8 @@ impl DirTree {
     /// * `node_id` - NodeId of the node whose duplicates should be filtered
     /// * `node` - node whose duplicates should be filtered
     /// `node_id` should be id of `node`.
-    fn _filter_dir_duplicates(&self, node_id: &NodeId, node_duplicates: &mut HashSet<NodeId>) {
-        log::info!("Filtering duplicates for: {:?}", self._get_node_path(node_id));
+    fn _filter_dir_duplicates(&self, node_id: &NodeId, node_duplicates: &mut HashSet<NodeId>, node_path: &OsString) {
+        log::info!("Filtering duplicates for: {:?}", node_path);
         node_duplicates.retain(|x| self._is_duplication_mutual(node_id, &x));
     }
 
