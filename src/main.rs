@@ -31,9 +31,7 @@
 
 use std::cmp::max;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fmt::Display;
 use std::fs::File;
 use std::io;
 use std::io::prelude::*;
@@ -42,7 +40,6 @@ use std::process::Command;
 
 use clap::Parser;
 use regex::Regex;
-use serde::Serialize;
 
 use duplicate_destroyer;
 use duplicate_destroyer::DuplicateObject;
@@ -196,7 +193,7 @@ fn handle_group(group: DuplicateObject) {
     println!("{}", "-".repeat(11));
 
     println!("Select action and paths. (Or press Ctrl-C to exit program.)");
-    while true {
+    loop {
         let (action, acted_file_nums) = get_action(paths.len());
         let acted_paths = paths
             .iter()

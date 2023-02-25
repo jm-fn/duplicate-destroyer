@@ -23,7 +23,6 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::{read_dir, DirEntry, Metadata};
-use std::path::Path;
 
 use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
 
@@ -165,6 +164,7 @@ impl DirTree {
         DirTree { dir_tree, root_id, duplicate_table: DuplicateTable::new(num_threads) }
     }
 
+    #[allow(dead_code)]
     /// Prints the dirtree structure.
     pub(crate) fn print<W: Write>(self, w: &mut W) {
         self.dir_tree.write_formatted(w).expect("Error writing dir_tree");
@@ -697,7 +697,6 @@ impl DirTree {
                         ref mut duplicates,
                         ref part_checksum,
                         ref path,
-                        ref size,
                         ..
                     } => {
                         self._add_duplicates_to_file_entry(
