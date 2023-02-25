@@ -42,14 +42,33 @@ const DIR_SIZE: u64 = 4096;
 /// Enum for all the possible nodes in DirTree
 #[derive(Debug)]
 enum NodeType {
-    File { path: OsString, size: u64, part_checksum: String, duplicates: HashSet<NodeId> },
-    Dir { path: OsString, size: Option<u64>, duplicates: HashSet<NodeId> },
-    Inaccessible { path: OsString, err: std::io::Error },
-    Symlink { path: OsString },
+    File {
+        path: OsString,
+        size: u64,
+        part_checksum: String,
+        duplicates: HashSet<NodeId>,
+        is_contained: IsContained,
+    },
+    Dir {
+        path: OsString,
+        size: Option<u64>,
+        duplicates: HashSet<NodeId>,
+        is_contained: IsContained,
+    },
+    Inaccessible {
+        path: OsString,
+        err: std::io::Error,
+        is_contained: IsContained,
+    },
+    Symlink {
+        path: OsString,
+        is_contained: IsContained,
+    },
 }
 
 /// Enum to flag child and parent nodes of nodes that are in duplicate list. To enable keeping only
 /// the topmost duplicates.
+#[derive(Debug)]
 enum IsContained {
     ChildOfDuplicate,
     ParentOfDuplicate,
@@ -73,8 +92,45 @@ impl NodeType {
         match self {
             Self::File { path, .. } => &path,
             Self::Dir { path, .. } => &path,
-            Self::Symlink { path } => &path,
+            Self::Symlink { path, .. } => &path,
             Self::Inaccessible { path, .. } => &path,
+        }
+    }
+
+    fn get_size(&self) -> Option<u64> {
+        match *self {
+            Self::File { size, .. } => Some(size),
+            Self::Dir { size, .. } => size,
+            Self::Symlink { .. } => None,
+            Self::Inaccessible { .. } => None,
+        }
+    }
+
+    /// Get IsContained status
+    fn is_contained(&self) -> &IsContained {
+        match self {
+            Self::File { is_contained, .. } => &is_contained,
+            Self::Dir { is_contained, .. } => &is_contained,
+            Self::Symlink { is_contained, .. } => &is_contained,
+            Self::Inaccessible { is_contained, .. } => &is_contained,
+        }
+    }
+
+    /// Set IsContained status
+    fn set_contained(&mut self, new_status: IsContained) {
+        match self {
+            Self::File { is_contained, .. } => {
+                *is_contained = new_status;
+            }
+            Self::Dir { is_contained, .. } => {
+                *is_contained = new_status;
+            }
+            Self::Symlink { is_contained, .. } => {
+                *is_contained = new_status;
+            }
+            Self::Inaccessible { is_contained, .. } => {
+                *is_contained = new_status;
+            }
         }
     }
 }
@@ -98,8 +154,12 @@ impl DirTree {
     /// * `num_threads` - number of threads to be created in duplicate table
     pub fn new(num_threads: usize) -> Self {
         let mut dir_tree = Tree::new();
-        let root_node =
-            NodeType::Dir { path: "ROOT_NODE".into(), size: None, duplicates: HashSet::new() };
+        let root_node = NodeType::Dir {
+            path: "ROOT_NODE".into(),
+            size: None,
+            duplicates: HashSet::new(),
+            is_contained: IsContained::No,
+        };
         let root_id = dir_tree.insert(Node::new(RefCell::new(root_node)), AsRoot).unwrap();
 
         DirTree { dir_tree, root_id, duplicate_table: DuplicateTable::new(num_threads) }
@@ -136,7 +196,7 @@ impl DirTree {
                 .children(&self.root_id)
                 .expect("Could not access root node in dir_tree.")
             {
-                if let NodeType::Inaccessible { path, err } = &*child.data().borrow() {
+                if let NodeType::Inaccessible { path, err, .. } = &*child.data().borrow() {
                     log::error!("Could not access directory {:?}: {}", path, err);
                 }
             }
@@ -154,11 +214,10 @@ impl DirTree {
         self._find_duplicates();
 
         let mut duplicates: Vec<DuplicateObject> = vec![];
-        let mut contained: Vec<DuplicateObject> = vec![];
 
         let root_ids = self._get_root_ids();
         for r_id in root_ids {
-            self._recursively_get_duplicates(&r_id, min_size, &mut duplicates, &mut contained);
+            self._recursively_get_duplicates(&r_id, min_size, &mut duplicates);
         }
 
         duplicates
@@ -177,75 +236,113 @@ impl DirTree {
         node.path().to_owned()
     }
 
+    /// Returns true if node is flagged as ParentOfDuplicate or as Duplicate
+    fn _is_node_parent_or_duplicate(&self, node_id: &NodeId) -> bool {
+        use IsContained::*;
+        if let ParentOfDuplicate | Duplicate = self._get_node_data(node_id).borrow().is_contained()
+        {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if node is flagged as ParentOfDuplicate
+    fn _is_node_parent(&self, node_id: &NodeId) -> bool {
+        if let IsContained::ParentOfDuplicate = self._get_node_data(node_id).borrow().is_contained()
+        {
+            true
+        } else {
+            false
+        }
+    }
+
     /// Go through DirTree and add the largest duplicate groups to duplicate list
     ///
     /// Check whether node with `node_id` contains duplicates. If so, add them to duplicate vector.
     /// Otherwise recursively check all its children for duplicates as well.
     ///
+    /// Adds duplicate group to duplicate list only if each its item is larger than `min_size`.
+    ///
     /// # Arguments
     /// * `node_id` - NodeId of the node that we want to search for duplicates
     /// * `duplicates` - Vector to add duplicate groups to
+    /// * `min_size` - minimum size of each element of duplicate object that
     // FIXME: Refactor this mess...
     fn _recursively_get_duplicates(
-        &self,
+        &mut self,
         node_id: &NodeId,
         min_size: u64,
         duplicates: &mut Vec<DuplicateObject>,
-        contained: &mut Vec<DuplicateObject>,
     ) {
-        let node: &NodeType = &*self._get_node_data(node_id).borrow();
-        match node {
+        //let node: &NodeType = &*self._get_node_data(node_id).borrow();
+        let dupl_data: Option<(OsString, u64, HashSet<NodeId>)> = match &*self
+            ._get_node_data(node_id)
+            .borrow()
+        {
             // Node has no duplicates, search children
-            NodeType::Dir { duplicates: dir_duplicates, .. } if dir_duplicates.len() == 0 => {
-                for child_id in self
-                    .dir_tree
-                    .children_ids(node_id)
-                    .expect("Could not get children for id {node_id}")
-                {
-                    self._recursively_get_duplicates(child_id, min_size, duplicates, contained);
-                }
-            }
+            NodeType::Dir { duplicates: dir_duplicates, .. } if dir_duplicates.len() == 0 => None,
             // Node has duplicates, add it to dupl. list
-            NodeType::Dir { duplicates: dir_duplicates, size, path }
+            NodeType::Dir { duplicates: dir_duplicates, size, path, .. }
                 if dir_duplicates.len() > 0 =>
             {
                 // Check that dir is not already present in some duplicate group
                 if !DirTree::_duplicates_contain_path(duplicates, path)
                     && size.expect("Dir without size should not have duplicates.") > min_size
                 {
-                    self._add_duplicates_to_list(
-                        path.clone(),
-                        size.expect("Dir without size should not have duplicates."),
-                        dir_duplicates.iter().map(|x| x.to_owned()).collect(),
-                        duplicates,
-                        contained,
-                    );
+                    let mut node_duplicates: HashSet<_> =
+                        dir_duplicates.iter().map(|x| x.to_owned()).collect();
+                    node_duplicates.insert(node_id.clone());
+                    Some((path.clone(), size.unwrap(), node_duplicates))
+                } else {
+                    None
                 }
             }
 
-            NodeType::File { duplicates: node_duplicates, size, path, .. }
-                if node_duplicates.len() > 0 =>
+            // File Node has duplicates, add it to dupl. list
+            NodeType::File { duplicates: file_duplicates, size, path, .. }
+                if file_duplicates.len() > 0 =>
             {
                 if !DirTree::_duplicates_contain_path(duplicates, path) && *size > min_size {
-                    self._add_duplicates_to_list(
-                        path.clone(),
-                        size.to_owned(),
-                        node_duplicates.iter().map(|x| x.to_owned()).collect(),
-                        duplicates,
-                        contained,
-                    );
+                    let mut node_duplicates: HashSet<_> =
+                        file_duplicates.iter().map(|x| x.to_owned()).collect();
+                    node_duplicates.insert(node_id.clone());
+                    Some((path.clone(), size.clone(), node_duplicates))
+                } else {
+                    None
                 }
             }
 
             // For other node types do nothing
-            _ => {}
+            _ => None,
+        };
+
+        if let Some((path, size, node_duplicates)) = dupl_data {
+            self._add_duplicates_to_list(path, size, node_duplicates, duplicates);
+        } else {
+            // If there are no duplicates, recursively search all children
+            let child_ids: Vec<_> = self
+                .dir_tree
+                .children_ids(node_id)
+                .expect("Could not get children for id {node_id}")
+                .map(|x| x.to_owned())
+                .collect();
+            for child_id in child_ids {
+                self._recursively_get_duplicates(&child_id, min_size, duplicates);
+            }
         }
     }
 
     /// Add duplicate group to the list of duplicates
     ///
-    /// We first check if one of the paths in the duplicate group is not already present in
-    /// some other group. If not, we add the new group to the list of duplicates.
+    /// We first check if one of the nodes is not a child of a node already included in the
+    /// duplicate list. If not, we add the new group to the list of duplicates.
+    ///
+    /// We perform the check by checking the IsContained flag on each node.
+    ///
+    /// We also remove all duplicate objects in the list corresponding to the nodes that are
+    /// descendants of the currently added nodes. (So that only the topmost duplicate directories
+    /// are included)
     ///
     /// # Arguments
     /// * `path` - path of the first member of the duplicate group
@@ -271,70 +368,176 @@ impl DirTree {
     /// accidentally delete all subdirs b in the process. We thus include only the top-most
     /// duplicate group.
     fn _add_duplicates_to_list(
-        &self,
+        &mut self,
         path: OsString,
         size: u64,
         data: HashSet<NodeId>,
         duplicates: &mut Vec<DuplicateObject>,
-        contained: &mut Vec<DuplicateObject>,
     ) {
+        // Be careful when modifying this fction or any of its helper fctions. It's easy to make
+        // recursion errors or omit some items here...
         log::trace!("Adding {:?} to list of duplicates.", path);
-        // If there is already a group with path in contained, do nothing
-        if (contained.iter().map(|x| x.duplicates.iter()).flatten().any(|x| *x == path)) {
-            return;
-        }
 
-        // For all paths in duplicate group look if it is not contained/contains path from
-        // some already included duplicate group. If so, remove the group that is contained.
-        let mut is_cont: Vec<DuplicateObject> = vec![];
-        let mut cont: Vec<DuplicateObject> = vec![];
-
-        let paths: Vec<_> = data.iter().map(|x| self._get_node_path(&x)).collect();
-        //let paths: Vec<&OsString> = data.iter().map(|d| &d.path).collect();
-        // FIXME: can I somehow do this without cloning duplicate objects?
-        for path in paths.iter() {
-            let (mut p_is_cont, mut p_cont): (Vec<_>, Vec<_>) = duplicates
-                .iter()
-                .map(|d_obj| (d_obj, d_obj.contained(&path)))
-                .filter(|(d_obj, cont)| !cont.is_not_related())
-                .map(|(d_obj, cont)| (d_obj.to_owned(), cont))
-                .partition(|(d_obj, cont)| cont.is_contained());
-            // Check some invariants
-            assert!(
-                p_is_cont.len() * p_cont.len() == 0,
-                "One path cannot be contained and contain duplicate group."
-            ); // From transitivity of containing
-            assert!(p_is_cont.len() <= 1, "One path cannot be contained in more duplicate groups");
-            for d_obj in p_cont.into_iter().map(|(d_obj, cont)| d_obj) {
-                if !cont.contains(&d_obj) {
-                    cont.push(d_obj)
-                }
-            }
-            for d_obj in p_is_cont.into_iter().map(|(d_obj, cont)| d_obj) {
-                if !is_cont.contains(&d_obj) {
-                    is_cont.push(d_obj)
-                }
+        let mut is_contained = false;
+        for id in data.iter() {
+            if let IsContained::ChildOfDuplicate = self._get_node_data(id).borrow().is_contained() {
+                is_contained = true;
             }
         }
 
-        // Remove all duplicate objects that are contained in the paths in this group
-        for dup_o in cont {
-            duplicates.remove(
-                duplicates
-                    .iter()
-                    .position(|x| *x == dup_o)
-                    .expect(&format!("Duplicate object not found {dup_o:?}")),
-            );
-            contained.push(dup_o)
+        for id in data.iter() {
+            if self._is_node_parent(id) {
+                log::info!("Node {:?} is parent", self._get_node_path(&id));
+                self._remove_duplicate_from_list(id, duplicates);
+            }
         }
 
-        let mut paths: HashSet<OsString> = paths.into_iter().map(|x| x.to_owned()).collect();
-        paths.insert(path.clone());
-        if !(is_cont.len() > 0) {
+        if !is_contained {
+            let paths: HashSet<_> = data.iter().map(|x| self._get_node_path(&x)).collect();
+            log::trace!("Adding {:?} to duplicates", paths);
             duplicates.push(DuplicateObject::new(size, paths));
+
+            for id in data.iter() {
+                // Set all children as contained
+                let children: Vec<_> = self
+                    .dir_tree
+                    .children_ids(id)
+                    .expect("Could not get children of node {id}.")
+                    .map(|x| x.to_owned())
+                    .collect();
+                for child in children {
+                    self._recursively_tag_as_contained(&child);
+                }
+                // Flag parents as containing duplicate
+                self._set_parents_of_duplicate(id);
+                // Set node as Duplicate
+                let mut node = self._get_node_data(id).borrow_mut();
+                node.set_contained(IsContained::Duplicate);
+            }
         } else {
-            contained.push(DuplicateObject::new(size, paths));
+            for id in data.iter() {
+                self._recursively_tag_as_contained(id);
+            }
         }
+    }
+
+    /// Tag node and its parents as ParentsOfDuplicate
+    fn _set_parents_of_duplicate(&mut self, node_id: &NodeId) {
+        let parent_ids: Vec<_> = self
+            .dir_tree
+            .ancestor_ids(node_id)
+            .expect("Could not get ancestor ids for {node_id}")
+            .map(|x| x.to_owned())
+            .collect();
+        for parent in parent_ids {
+            if parent != self.root_id {
+                let mut node = self._get_node_data(&parent).borrow_mut();
+                // If parent is already marked as ParentOfDuplicate, then all of it's ancestors are
+                // too, so return early.
+                if let IsContained::ParentOfDuplicate = node.is_contained() {
+                    return;
+                }
+                node.set_contained(IsContained::ParentOfDuplicate);
+            }
+        }
+    }
+
+    /// Tag node and all of its children as contained
+    fn _recursively_tag_as_contained(&mut self, node_id: &NodeId) {
+        {
+            let mut node = self._get_node_data(node_id).borrow_mut();
+            // Don't descend to children if node is already tagged as ChildOfDuplicates
+            if let IsContained::ChildOfDuplicate = node.is_contained() {
+                return;
+            } else {
+                node.set_contained(IsContained::ChildOfDuplicate);
+            }
+        }
+
+        let children: Vec<_> = self
+            .dir_tree
+            .children_ids(node_id)
+            .expect("Could not get children of node: {node_id}")
+            .map(|x| x.to_owned())
+            .collect();
+        for child_id in children {
+            self._recursively_tag_as_contained(&child_id)
+        }
+    }
+
+    /// Find children of node that are in list of duplicates and remove them
+    ///
+    /// Recursively goes over all children of `node_id` that are marked as parents of duplicate. If
+    /// it finds any nodes marked as being in duplicate list, removes the duplicate object
+    /// corresponding to the node.
+    ///
+    /// # Arguments
+    /// * `node_id` - NodeId of the node that should contain duplicate as one (or more) of its
+    ///               descendants
+    /// * `duplicates` - vector of duplicates from which the duplicate(s) should be removed
+    fn _remove_duplicate_from_list(
+        &mut self,
+        node_id: &NodeId,
+        duplicates: &mut Vec<DuplicateObject>,
+    ) {
+        use IsContained::*;
+
+        let mut dupl_nodes = HashSet::new();
+        {
+            let node = &*self._get_node_data(node_id).borrow();
+            // If node is duplicate, make a duplicate object out of it and move it from duplicates to
+            // contained.
+            if let Duplicate = node.is_contained() {
+                log::debug!("Removing duplicate: {:?}", node.path());
+                let dup_obj = self._make_duplicate_object_from_node(&node);
+                // FIXME: Let this fail loudly or replace with retain method?
+                duplicates.remove(
+                    duplicates
+                        .iter()
+                        .position(|x| *x == dup_obj)
+                        .expect(&format!("Duplicate object not found {dup_obj:?}")),
+                );
+                dupl_nodes = node
+                    .duplicates()
+                    .expect("Node is marked as IsContained::Duplicate, but has no duplicates")
+                    .clone();
+                dupl_nodes.insert(node_id.clone());
+            }
+        }
+
+        // Flag all nodes removed from duplicates as contained
+        for id in dupl_nodes {
+            let mut node = self._get_node_data(&id).borrow_mut();
+            node.set_contained(ChildOfDuplicate);
+        }
+
+        // FIXME: Return here if the node was Duplicate? //
+
+        // Recursively go over all children that are parents or Duplicates
+        let children: Vec<_> = self
+            .dir_tree
+            .children_ids(node_id)
+            .expect("Could not get children of node: {node_id}")
+            .filter(|x| self._is_node_parent_or_duplicate(x))
+            .map(|x| x.to_owned())
+            .collect();
+        for child_id in children {
+            self._remove_duplicate_from_list(&child_id, duplicates);
+        }
+    }
+
+    /// Makes DuplicateObject based on duplicates and size attributes of node
+    fn _make_duplicate_object_from_node(&self, node: &NodeType) -> DuplicateObject {
+        let mut paths: HashSet<_> = node
+            .duplicates()
+            .expect("Node is of type IsContained::Duplicate, but has no duplicates.")
+            .iter()
+            .map(|x| self._get_node_path(&x))
+            .collect();
+        paths.insert(node.path().clone());
+        let size =
+            node.get_size().expect("Node is of type IsContained::Duplicate, but has no size.");
+        DuplicateObject { duplicates: paths, size }
     }
 
     /// Recursively go through all folders/files and create nodes with metadata for each
@@ -357,6 +560,7 @@ impl DirTree {
                                 path: name.clone(),
                                 size: None,
                                 duplicates: HashSet::new(),
+                                is_contained: IsContained::No,
                             };
                             let node_id = self._insert_node(node, parent_node);
                             // FIXME: This contains 1 unnecessary allocation, maybe redo? <05-11-22> //
@@ -370,7 +574,11 @@ impl DirTree {
                         // Dir not readable
                         Err(e) => {
                             log::info!("Could not access dir {:?}: {}", name, e);
-                            let inac_node = NodeType::Inaccessible { path: name, err: e };
+                            let inac_node = NodeType::Inaccessible {
+                                path: name,
+                                err: e,
+                                is_contained: IsContained::No,
+                            };
                             self._insert_node(inac_node, parent_node);
                         }
                     }
@@ -385,6 +593,7 @@ impl DirTree {
                                 size: metadata.len(),
                                 part_checksum: checksum.clone(),
                                 duplicates: HashSet::new(),
+                                is_contained: IsContained::No,
                             };
                             let node_id = self._insert_node(node, parent_node);
                             self.duplicate_table.register_item(
@@ -394,14 +603,19 @@ impl DirTree {
                         }
                         Err(e) => {
                             log::info!("Could not access dir {:?}: {}", name, e);
-                            let inac_node = NodeType::Inaccessible { path: name, err: e };
+                            let inac_node = NodeType::Inaccessible {
+                                path: name,
+                                err: e,
+                                is_contained: IsContained::No,
+                            };
                             self._insert_node(inac_node, parent_node);
                         }
                     };
                 // item is not a file nor a dir.
                 } else {
                     if metadata.is_symlink() {
-                        let symlink_node = NodeType::Symlink { path: name };
+                        let symlink_node =
+                            NodeType::Symlink { path: name, is_contained: IsContained::No };
                         self._insert_node(symlink_node, parent_node);
 
                     // File is just weird. (Probably named pipe though...)
@@ -412,7 +626,11 @@ impl DirTree {
                             std::io::ErrorKind::Other,
                             "Can not process named pipes.",
                         );
-                        let inac_node = NodeType::Inaccessible { path: name, err: e };
+                        let inac_node = NodeType::Inaccessible {
+                            path: name,
+                            err: e,
+                            is_contained: IsContained::No,
+                        };
                         self._insert_node(inac_node, parent_node);
                     }
                 }
@@ -421,7 +639,8 @@ impl DirTree {
             // Item is inaccessible
             Err(e) => {
                 log::info!("Could not access file {:?}: {}", name, e);
-                let inac_node = NodeType::Inaccessible { path: name, err: e };
+                let inac_node =
+                    NodeType::Inaccessible { path: name, err: e, is_contained: IsContained::No };
                 self._insert_node(inac_node, parent_node);
             }
         }
@@ -474,7 +693,13 @@ impl DirTree {
             {
                 let node_data = self._get_node_data(&id);
                 match *node_data.borrow_mut() {
-                    NodeType::File { ref mut duplicates, ref part_checksum, ref path, .. } => {
+                    NodeType::File {
+                        ref mut duplicates,
+                        ref part_checksum,
+                        ref path,
+                        ref size,
+                        ..
+                    } => {
                         self._add_duplicates_to_file_entry(
                             id,
                             duplicates,
@@ -498,7 +723,7 @@ impl DirTree {
                 .expect(&format!("Could not traverse tree for {root_id:?}"))
             {
                 let node_data = self._get_node_data(&id);
-                if let NodeType::Dir { ref mut duplicates, ref mut size, ref path } =
+                if let NodeType::Dir { ref mut duplicates, ref mut size, ref path, .. } =
                     *node_data.borrow_mut()
                 {
                     self._filter_dir_duplicates(&id, duplicates, path);
@@ -668,7 +893,12 @@ impl DirTree {
     /// * `node_id` - NodeId of the node whose duplicates should be filtered
     /// * `node` - node whose duplicates should be filtered
     /// `node_id` should be id of `node`.
-    fn _filter_dir_duplicates(&self, node_id: &NodeId, node_duplicates: &mut HashSet<NodeId>, node_path: &OsString) {
+    fn _filter_dir_duplicates(
+        &self,
+        node_id: &NodeId,
+        node_duplicates: &mut HashSet<NodeId>,
+        node_path: &OsString,
+    ) {
         log::info!("Filtering duplicates for: {:?}", node_path);
         node_duplicates.retain(|x| self._is_duplication_mutual(node_id, &x));
     }
@@ -758,7 +988,7 @@ mod tests {
         let mut out = String::new();
         dt.print(&mut out);
         let expected_tree =
-            "RefCell { value: Dir { path: \"ROOT_NODE\", size: None, duplicates: {} } }\n";
+            "RefCell { value: Dir { path: \"ROOT_NODE\", size: None, duplicates: {}, is_contained: No } }\n";
         assert_eq!(expected_tree, out);
     }
 }

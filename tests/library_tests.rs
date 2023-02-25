@@ -173,7 +173,7 @@ fn contained_duplicate_test() {
     }
 
     let diff_file_path = tmp_dir_path.join("C").join("diff.txt");
-    write_file(&diff_file_path, "test_text_beta");
+    write_file(&diff_file_path, "test_text_diff");
 
     // Create args for DuDe
     let mut options = HashMap::new();
