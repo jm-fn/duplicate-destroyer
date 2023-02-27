@@ -7,7 +7,7 @@
 //! duplicate folders and will be able to delete them or replace the contents with soft/hard links.
 
 mod checksum;
-pub mod dir_tree;
+mod dir_tree;
 mod duplicate_object;
 mod duplicate_table;
 
