@@ -1,1 +1,4 @@
 /target
+/aux
+.vimspector.json
+**/*.swp
