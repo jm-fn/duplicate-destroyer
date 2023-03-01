@@ -4,6 +4,7 @@ Command line tool that finds duplicate directories and provides their basic hand
 
 [![Tests](https://github.com/jm-fn/duplicate-destroyer/actions/workflows/tests.yml/badge.svg)](https://github.com/jm-fn/duplicate-destroyer/actions/workflows/tests.yml)
 [![crates.io](https://img.shields.io/crates/v/duplicate_destroyer.svg)](https://crates.io/crates/duplicate_destroyer)
+[![docs.rs](https://img.shields.io/docsrs/duplicate_destroyer)](https://docs.rs/duplicate_destroyer/latest/duplicate_destroyer)
 
 ## The Pitch
 
