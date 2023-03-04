@@ -16,8 +16,26 @@ Have you ever backed up a backup folder of a backup folder? Have you then tried 
 
 # Installation
 
-TBD. For now the only way is cloning the repo and building from source. I have so far only tested the code with Rust v1.64 on Fedora 35.
+## From Source
 
+On Linux with Rust 1.64 or higher install by running:
+
+```
+cargo install --features cli duplicate_destroyer
+```
+After the installation is finished, there will be `dude` binary available.
+
+I have so far tested the installation on Fedora 35+ and on Raspberry Pi OS Bullseye.
+
+### On Ubuntu 22.04 LTS
+There may be a missing build dependency - `cc`. To install the DuDe first run
+```
+apt install build-essential
+```
+and then build from source
+```
+cargo install --features cli duplicate_destroyer
+```
 
 # Basic Usage
 
@@ -57,6 +75,9 @@ To configure the number of threads used in calculating checksums use the `--jobs
 dude --path path/to/some/dir --jobs 3
 ```
 When using the DuDe with a modern CPU and an external HDD it is usually better to use only one thread (as is the default now), since the program then becomes IO-bound and the parallel access to multiple files from the HDD can reduce the read speed.
+
+### Minimum-size
+The minimum size of the duplicates returned can be specified with the `--minimum-size` argument. Note however, that this will not significantly reduce the computation time, since the DuDe still get the full checksum of all the files that might have duplicates. This is done because even large directories might differ in some small files and by disregarding the small files completely we would run the risk of losing some small but important data.
 
 ### CLI options
 ```
