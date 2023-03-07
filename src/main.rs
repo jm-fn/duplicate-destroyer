@@ -44,11 +44,6 @@ use regex::Regex;
 use duplicate_destroyer;
 use duplicate_destroyer::DuplicateObject;
 
-/// Minimum size of duplicates that is being output.
-/// (DuDe still calculates the hashes and finds their duplicates, it just does not include them in
-///  output)
-const DEFAULT_MINIMUM_SIZE: u64 = 100;
-
 /// CLI argument parser
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -57,11 +52,11 @@ struct Args {
     #[clap(short, long)]
     path: Vec<OsString>,
 
-    /// Minimul size of duplicates considered (can have a metric prefix) [100]
+    /// Minimul size of duplicates considered (can have a metric prefix) [default=100]
     #[clap(short, long)]
     minimum_size: Option<String>,
 
-    /// Number of jobs that run simultaneously
+    /// Number of jobs that run simultaneously [default=0]
     #[clap(short, long)]
     jobs: Option<usize>,
 
@@ -104,10 +99,12 @@ fn main() -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "No directory specified."));
     }
 
+    // Get DuDe configuration
+    let mut config: duplicate_destroyer::Config = Default::default();
+
     // Get minimum size of elements of duplicate groups
-    let mut minimum_size = DEFAULT_MINIMUM_SIZE;
     if let Some(ms) = args.minimum_size {
-        minimum_size = match parse_human_readable_size(&ms) {
+        match parse_human_readable_size(&ms) {
             None => {
                 log::error!("Could not parse minimum size: {}", ms);
                 return Err(io::Error::new(
@@ -115,29 +112,21 @@ fn main() -> io::Result<()> {
                     format!("Bad form of minimum size: {}. Use e.g. 1k", ms),
                 ));
             }
-            Some(val) => val,
+            Some(val) => config.set_minimum_size(val),
         }
     }
 
     // Get number of threads
-    let mut thread_num = 0;
     if let Some(num) = args.jobs {
-        thread_num = max(num as i64 - 1, 0);
+        config.set_num_threads(max(num - 1, 0));
     }
-
-    log::info!("Minimum size of duplicates considered is: {minimum_size}");
 
     log::trace!("Got directories:");
     for dir in args.path.iter() {
         log::trace!("{:?}", dir)
     }
 
-    // FIXME: This should probably have its own struct
-    let mut options = HashMap::new();
-    options.insert("min_size".to_string(), minimum_size);
-    options.insert("num_threads".to_string(), thread_num as u64);
-
-    let duplicates = duplicate_destroyer::get_duplicates(args.path, options).unwrap();
+    let duplicates = duplicate_destroyer::get_duplicates(args.path, config).unwrap();
     //let dupl_strings: Vec<_> = duplicates.iter().map(|x| x.duplicates.iter().map(|x| x.to_owned().into_string().unwrap_or(String::from("Error decoding path."))).collect::<HashSet<String>>()).collect();
     _print_statistics(&duplicates);
 

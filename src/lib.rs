@@ -7,20 +7,6 @@
 //! directories. It then returns the topmost directories and files for which there exists at least
 //! one duplicate.
 //!
-//! ### Options
-//! The `get_duplicates` function has a `options` argument which is (for now) a
-//! [HashMap](std::collections::HashMap) of the
-//! option keywords and their numerical values. The accepted keywords are:
-//! * _"num_threads"_ - The number of threads spawned for calculating the checksums of files
-//! [default = 0]
-//! * _"min_size"_ - The minimum size of duplicate objects returned. [default = 0]<br/>
-//!    This option has no bearing on the length of calculation, only on the output size. We
-//!    calculate checksums of objects smaller than _min_size_ (if they might have duplicates),
-//!    since otherwise we would not get the duplicates of directories containing objects smaller
-//!    than _min_size_.
-//!
-//! All the keywords in the list above are optional and all other keywords are silently ignored.
-//!
 //! # Example usage
 //! Suppose we have directory structure:
 //! ```bash
@@ -48,30 +34,35 @@
 //!  {"tests/fixtures/A", "tests/fixtures/B/A"}:
 //!
 //! ```
-//! use std::collections::{HashSet, HashMap};
+//! # use std::collections::HashSet;
+//! # use std::ffi::OsString;
 //! use duplicate_destroyer::*;
-//! use std::ffi::OsString;
 //!
+//! // Create DuDe configuration
+//! let mut config: Config = Default::default();
+//! config.set_minimum_size(0); // Use non-default minimum size (see Config structure for details)
 //!
-//! let options = HashMap::from([(String::from("num_threads"), 0_u64),
-//!                             (String::from("min_size"), 10_u64)]);
+//! // Create vector of paths to search for duplicates
 //! let input_dirs = vec![OsString::from("tests/fixtures")];
-//! let duplicates = duplicate_destroyer::get_duplicates(input_dirs, options).unwrap();
 //!
-//! let expected_output = DuplicateObject::new(8235,
-//!                                            HashSet::from([OsString::from("tests/fixtures/A"),
-//!                                            OsString::from("tests/fixtures/B/A")]));
+//! // Get duplicates
+//! let duplicates = duplicate_destroyer::get_duplicates(input_dirs, config).unwrap();
+//!
+//! let expected_paths = [OsString::from("tests/fixtures/A"),
+//!                       OsString::from("tests/fixtures/B/A")];
+//! let expected_output = DuplicateObject::new(8235, HashSet::from(expected_paths));
 //! assert_eq!(duplicates[0], expected_output)
 //! ```
 
 mod checksum;
+mod config;
 mod dir_tree;
 mod duplicate_object;
 mod duplicate_table;
 
+pub use config::Config;
 pub use duplicate_object::DuplicateObject;
 
-use std::collections::HashMap;
 use std::ffi::OsString;
 
 use duplicate_object::*;
@@ -84,17 +75,17 @@ use duplicate_object::*;
 ///
 /// # Arguments:
 /// * `directories` - vector of paths that will be searched for duplicates
-/// * `options` - HashMap of settings, see [options](crate#options)
+/// * `config` - configuration of duplicate destroyer. See [`Config`](crate::Config) struct
 pub fn get_duplicates(
     directories: Vec<OsString>,
-    mut options: HashMap<String, u64>,
+    config: Config,
 ) -> Result<Vec<DuplicateObject>, DuDeError> {
-    let num_threads: usize = options.remove("num_threads").unwrap_or(0) as usize;
+    let num_threads: usize = config.get_num_threads();
     let mut tree = dir_tree::DirTree::new(num_threads);
     tree.add_directories(directories);
 
     log::debug!("Finished adding directories");
-    let min_size = options.remove("min_size").unwrap_or(0);
+    let min_size = config.get_minimum_size();
     tree.finalise();
     let mut duplicates = tree.get_duplicates(min_size);
     duplicates.sort_by_key(|x| x.size);

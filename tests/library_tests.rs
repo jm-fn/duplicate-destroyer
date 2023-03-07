@@ -52,8 +52,8 @@ fn duplicate_dirs_test() {
     }
 
     // Create args for DuDe
-    let mut options = HashMap::new();
-    options.insert("min_size".to_string(), 0);
+    let mut options: duplicate_destroyer::Config = Default::default();
+    options.set_minimum_size(0);
     let paths = vec![tmp_dir_str.clone()];
 
     // Run DuDe
@@ -104,8 +104,8 @@ fn duplicate_files_test() {
     }
 
     // Create args for DuDe
-    let mut options = HashMap::new();
-    options.insert("min_size".to_string(), 0);
+    let mut options: duplicate_destroyer::Config = Default::default();
+    options.set_minimum_size(0);
     let paths = vec![tmp_dir_str.clone()];
 
     // Run DuDe
@@ -176,8 +176,8 @@ fn contained_duplicate_test() {
     write_file(&diff_file_path, "test_text_diff");
 
     // Create args for DuDe
-    let mut options = HashMap::new();
-    options.insert("min_size".to_string(), 0);
+    let mut options: duplicate_destroyer::Config = Default::default();
+    options.set_minimum_size(0);
     let mut paths = vec![
         tmp_dir_path.join("A").to_owned().into_os_string(),
         tmp_dir_path.join("B").to_owned().into_os_string(),
