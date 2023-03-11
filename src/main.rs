@@ -49,7 +49,7 @@ use duplicate_destroyer::DuplicateObject;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Add path to be scanned
-    #[clap(short, long)]
+    #[clap(short, long, required = true)]
     path: Vec<OsString>,
 
     /// Minimul size of duplicates considered (can have a metric prefix) [default=100]
@@ -94,11 +94,6 @@ fn main() -> io::Result<()> {
 
     let args = Args::parse();
 
-    if args.path.len() == 0 {
-        log::error!("Please specify at least one directory.");
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "No directory specified."));
-    }
-
     // Get DuDe configuration
     let mut config: duplicate_destroyer::Config = Default::default();
 
@@ -126,10 +121,12 @@ fn main() -> io::Result<()> {
         log::trace!("{:?}", dir)
     }
 
+    // Run Duplicate Destroyer
     let duplicates = duplicate_destroyer::get_duplicates(args.path, config).unwrap();
-    //let dupl_strings: Vec<_> = duplicates.iter().map(|x| x.duplicates.iter().map(|x| x.to_owned().into_string().unwrap_or(String::from("Error decoding path."))).collect::<HashSet<String>>()).collect();
+
     _print_statistics(&duplicates);
 
+    // Print json results to file
     if let Some(json_file) = args.json_file {
         let serialized = serde_json::to_string(&duplicates).unwrap();
         let mut file = File::create(json_file)?;
