@@ -128,7 +128,7 @@ fn main() -> io::Result<()> {
 
     // Print json results to file
     if let Some(json_file) = args.json_file {
-        let serialized = serde_json::to_string(&duplicates).unwrap();
+        let serialized = serde_json::to_string_pretty(&duplicates).unwrap();
         let mut file = File::create(json_file)?;
         write!(file, "{}", serialized).expect("An error occured when writing output to file.");
     }
