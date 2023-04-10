@@ -67,7 +67,7 @@ will open both files.
 ```
 D 0
 ```
-will delete "path/to/dir/some_dir/A" in our example. (This is not implemented yet.)
+will (upon confirmation) delete "path/to/dir/some_dir/A" in our example.
 
 ### Parallelism
 To configure the number of threads used in calculating checksums use the `--jobs` flag:
@@ -77,7 +77,7 @@ dude --path path/to/some/dir --jobs 3
 When using the DuDe with a modern CPU and an external HDD it is usually better to use only one thread (as is the default now), since the program then becomes IO-bound and the parallel access to multiple files from the HDD can reduce the read speed.
 
 ### Minimum-size
-The minimum size of the duplicates returned can be specified with the `--minimum-size` argument. Note however, that this will not significantly reduce the computation time, since the DuDe still get the full checksum of all the files that might have duplicates. This is done because even large directories might differ in some small files and by disregarding the small files completely we would run the risk of losing some small but important data.
+The minimum size of the duplicates returned can be specified with the `--minimum-size` argument. Note however, that this will not significantly reduce the computation time, since the DuDe still gets the checksum of all the files that might have duplicates. This is done because even large directories might differ in some small files and by disregarding the small files completely we would run the risk of losing some small but important data.
 
 ### CLI options
 ```

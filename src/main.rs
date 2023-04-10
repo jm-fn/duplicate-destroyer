@@ -27,19 +27,24 @@
 //! ```
 //! D 0
 //! ```
-//! will delete "path/to/dir/some_dir/A" in our example. (This is not implemented yet.)
+//! will delete "path/to/dir/some_dir/A" in our example.
 
 use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::File;
+use std::fs::{File, remove_dir_all};
 use std::io;
 use std::io::prelude::*;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::Command;
 
 use clap::Parser;
+use copy_confirmer::*;
+use dialoguer::Confirm;
+use minus::Pager;
 use regex::Regex;
+use walkdir::WalkDir;
 
 use duplicate_destroyer;
 use duplicate_destroyer::DuplicateObject;
@@ -196,7 +201,9 @@ fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
         // get user input
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
+        #[allow(unused_assignments)]
         let mut action: Actions = Actions::Nothing;
+        #[allow(unused_assignments)]
         let mut file_nums = vec![];
 
         // parse user input into Actions enum member and numbers of files
@@ -279,6 +286,15 @@ fn execute_action(
 
         Actions::Nothing => {}
         Actions::Quit => std::process::exit(0),
+        Actions::Delete => {
+            if let Some(original) = original_path {
+                for file in files {
+                    delete_dir(&file, &original)?;
+                }
+            } else {
+                panic!("There is no original path for delete action.")
+            }
+        }
 
         _ => {
             println!("This is not yet implemented... ");
@@ -323,6 +339,34 @@ fn open_containing_dir(file: &OsString) -> io::Result<()> {
         .as_os_str()
         .to_owned();
     open_file(&dir)
+}
+
+/// Delete `deleted` dir
+///
+/// First confirms that user truly wants to delete the directory, that all the files in
+/// `deleted` dir are present in another (`original`) dir and that the directories share no inodes.
+///
+/// # Arguments
+/// * `deleted` - deleted directory
+/// * `original` - directory that should contain all the files of `deleted`
+fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
+    // Prompt user for confirmation
+    if !Confirm::new().with_prompt(format!("Do you want to delete {:?}", deleted)).wait_for_newline(true).interact()? {
+        eprintln!("Abandoning deletion...");
+        return Ok(());
+    }
+
+    // Check that original contains all files of deleted and that they share no inodes
+    if !_verify_copy(original, deleted)? {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Could not delete {:?}, could not verify that it is indeed copy", deleted),
+        ));
+    }
+
+    eprintln!("Deleting {:?}", deleted);
+    remove_dir_all(deleted)?;
+    Ok(())
 }
 
 // ******************//
@@ -443,4 +487,66 @@ fn _parse_human_readable_size(input: &str) -> Option<u64> {
     }
 
     result
+}
+
+/// Verify that it is safe to delete copy
+///
+/// Verifies that all file in `copy` dir are present in `original` dir and that the two directories
+/// share no inodes.
+///
+/// # Arguments
+/// * `original` - directory that will be left unchanged in destructive operations
+/// * `copy` - directory that will be changed in destructive operation
+fn _verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
+    // verify that copy contains all files of original dir
+    eprintln!("Checking that all files in {:?} are duplicates:", copy);
+    let cc = CopyConfirmer::new(1);
+    let cc_result = cc.compare(original.to_owned(), vec![copy.to_owned()]).unwrap();
+    if let ConfirmerResult::MissingFiles(missing_files) = cc_result {
+        // Print out all missing files
+        let mut file_text = format!("Missing files from {:?}: (Press q to quit)\n", copy);
+        for file in missing_files {
+            file_text.push_str(&format!("{:?}", file));
+        }
+        _print_to_pager(file_text);
+
+        return Ok(false);
+    }
+
+    // Verify that the copy shares no inodes with original dir
+    let origin_inodes: HashSet<_> = WalkDir::new(original)
+        .into_iter()
+        .filter_map(|x| x.ok()) // FIXME: maybe let this panic instead to avoid missing inodes?
+        .map(|x| x.metadata())
+        .filter_map(|x| x.ok())
+        .map(|x| x.ino())
+        .collect();
+
+    let copy_inodes: HashSet<_> = WalkDir::new(copy)
+        .into_iter()
+        .filter_map(|x| x.ok())
+        .map(|x| x.metadata())
+        .filter_map(|x| x.ok())
+        .map(|x| x.ino())
+        .collect();
+
+    if !copy_inodes.is_disjoint(&origin_inodes) {
+        eprintln!(
+            "There are some files in {:?} and {:?} sharing inodes. I will not to delete {:?}",
+            original, copy, copy
+        );
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+/// Print text to static pager
+fn _print_to_pager(text: String) {
+    // FIXME: somehow this interferes with std::fmt::Write, put this to the top of file
+    use std::fmt::Write;
+
+    let mut output = Pager::new();
+    write!(output, "{}", text).expect("Could not write to pager");
+    minus::page_all(output).expect("Could not write to pager.");
 }
