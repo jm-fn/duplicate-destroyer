@@ -6,7 +6,7 @@ edition = "2021"
 rust-version = "1.64"
 license = "AGPL-3.0-or-later"
 keywords = ["duplicate", "directory", "cleaner", "finder", "cli"]
-categories = ["command-line-utilities", "Filesystem"]
+categories = ["command-line-utilities", "filesystem"]
 readme = "README.md"
 repository = "https://github.com/jm-fn/duplicate-destroyer"
 
