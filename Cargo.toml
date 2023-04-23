@@ -9,6 +9,7 @@ keywords = ["duplicate", "directory", "cleaner", "finder", "cli"]
 categories = ["command-line-utilities", "filesystem"]
 readme = "README.md"
 repository = "https://github.com/jm-fn/duplicate-destroyer"
+autobins = false
 
 [dependencies]
 blake2 = "0"
@@ -35,7 +36,7 @@ cli = ["clap", "indicatif", "copy_confirmer", "dialoguer", "minus"]
 
 [[bin]]
 name = "dude"
-path = "src/main.rs"
+path = "src/bin/main.rs"
 required-features = ["cli"]
 
 [lib]

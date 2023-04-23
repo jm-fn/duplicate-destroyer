@@ -64,7 +64,7 @@ impl ProgressMultiline for MultiProgressBar {
     }
 
     // FIXME: Print something useful?
-    /// Print some info
+    /// Print some info 
     fn debug_string(&self) -> String {
         "AddDirBar".into()
     }
