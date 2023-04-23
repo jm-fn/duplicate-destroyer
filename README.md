@@ -10,8 +10,6 @@ Command line tool that finds duplicate directories and provides their basic hand
 
 Have you ever backed up a backup folder of a backup folder? Have you then tried to deduplicate the tangled mess with conventional deduplicator only to find that you have to check 20 431 files manually? Then the DuDe is for you! DuDe finds the topmost duplicate folders in your filesystem and allows you to effortlessly get rid of all of your duplicates once and for all (or at least until the next backup...).
 
-...at least that's the sales pitch. It's not there yet.
-
 (Also this is a small project intended as a learning experience with Rust.)
 
 # Installation
