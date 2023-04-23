@@ -92,3 +92,6 @@ Options:
   -h, --help                         Print help
   -V, --version                      Print version
 ```
+
+# The Library
+If you do not like the user interface, you can write your own! The DuDe exposes a library with the core functionality. See the documentation [here](https://docs.rs/duplicate_destroyer/latest/duplicate_destroyer/).
