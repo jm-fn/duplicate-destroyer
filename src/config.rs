@@ -1,9 +1,13 @@
 //! Configuration of duplicate destroyer
 //!
 //! This module provides the structure that contains all configuration of duplicate destroyer.
+use std::rc::Rc;
+use std::cell::RefCell;
+
+use crate::{NoProgressIndicator, NoProgressMultiline, ProgressIndicator, ProgressMultiline};
 
 /// Stores all configuration of Duplicate Destroyer
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Config {
     /// Minimum size of elements in [`DuplicateObjects`](crate::DuplicateObject) returned. [default = 100]
     ///
@@ -15,6 +19,21 @@ pub struct Config {
 
     /// Number of threads spawned for calculating the checksums of files [default = 0]
     pub num_threads: Option<usize>,
+
+    /// Simple progress indicator.
+    ///
+    /// To add a progress indicator to the DuDe, set to a trait object implementing the
+    /// [`ProgressIndicator`](crate::progress_trait::ProgressIndicator) trait.
+    /// [default = [`NoProgressIndicator`](crate::progress_trait::NoProgressIndicator)]
+    pub progress_indicator: Option<Rc<RefCell<dyn ProgressIndicator>>>,
+
+    /// Multiline progress indicator.
+    ///
+    /// To add a progress indicator for indicating the progress of duplicate file search add a
+    /// trait object implementing the
+    /// [`ProgressMultiline`](crate::progress_trait::ProgressMultiline) trait.
+    /// [default = [`NoProgressMultiline`](crate::progress_trait::NoProgressAddDir)]
+    pub progress_multiline: Option<Rc<RefCell<dyn ProgressMultiline>>>,
 }
 
 impl Config {
@@ -36,5 +55,33 @@ impl Config {
     /// Get [`num_threads`](Config::num_threads)
     pub fn get_num_threads(&self) -> usize {
         self.num_threads.unwrap_or(0)
+    }
+
+    /// Set [`progress_indicator`](Config::progress_indicator)
+    pub fn set_progress_indicator(&mut self, progress_indicator: Rc<RefCell<dyn ProgressIndicator>>) {
+        self.progress_indicator = Some(progress_indicator);
+    }
+
+    /// Get [`progress_indicator`](Config::progress_indicator)
+    pub fn get_progress_indicator(&self) -> Rc<RefCell<dyn ProgressIndicator> >{
+        if let Some(ref pi) = self.progress_indicator {
+            Rc::clone(pi)
+        } else {
+            Rc::new(RefCell::new(NoProgressIndicator{}))
+        }
+    }
+
+    /// Set [`multiline_progress`](Config::multiline_progress)
+    pub fn set_multiline_progress(&mut self, progress_indicator: Rc<RefCell<dyn ProgressMultiline>>) {
+        self.progress_multiline = Some(progress_indicator);
+    }
+
+    /// Get [`multiline_progress`](Config::multiline_progress)
+    pub fn get_multiline_progress(&self) -> Rc<RefCell<dyn ProgressMultiline> >{
+        if let Some(ref pm) = self.progress_multiline {
+            Rc::clone(pm)
+        } else {
+            Rc::new(RefCell::new(NoProgressMultiline{}))
+        }
     }
 }

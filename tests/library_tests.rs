@@ -57,7 +57,7 @@ fn duplicate_dirs_test() {
     let paths = vec![tmp_dir_str.clone()];
 
     // Run DuDe
-    let duplicates = duplicate_destroyer::get_duplicates(paths, options);
+    let duplicates = duplicate_destroyer::get_duplicates(paths, &options);
 
     // Check results
     let expected_duplicate = DuplicateObject::new(
@@ -109,7 +109,7 @@ fn duplicate_files_test() {
     let paths = vec![tmp_dir_str.clone()];
 
     // Run DuDe
-    let duplicates = duplicate_destroyer::get_duplicates(paths, options);
+    let duplicates = duplicate_destroyer::get_duplicates(paths, &options);
 
     // Check results
     let expected_duplicate = DuplicateObject::new(
@@ -193,11 +193,11 @@ fn contained_duplicate_test() {
     );
 
     // Run DuDe with the paths to A, B, C
-    let duplicates = duplicate_destroyer::get_duplicates(paths.clone(), options.clone());
+    let duplicates = duplicate_destroyer::get_duplicates(paths.clone(), &options);
     assert_eq!(Ok(vec![expected_duplicate.clone()]), duplicates);
 
     paths.reverse();
-    let reversed_duplicates = duplicate_destroyer::get_duplicates(paths, options);
+    let reversed_duplicates = duplicate_destroyer::get_duplicates(paths, &options);
     assert_eq!(Ok(vec![expected_duplicate]), reversed_duplicates);
 
     // Prevent removing of tmp_dir until all tests are done

@@ -16,14 +16,22 @@
 //! multiple entries, we get the vector containing the specified item.
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::time;
+use std::thread;
+use std::rc::Rc;
+use std::cell::RefCell;
+
 
 use threadpool::ThreadPool;
 
 use crate::checksum::get_checksum;
 use crate::dir_tree::TableData;
+use crate::{ProgressIndicator, NoProgressIndicator};
 
 type PartialChecksum = String;
 type Checksum = String;
+
+const HUNDRED_MILIS: time::Duration = time::Duration::from_millis(100);
 
 #[derive(Debug)]
 pub(crate) struct DuplicateTable {
@@ -32,7 +40,9 @@ pub(crate) struct DuplicateTable {
     checksum_rx: Receiver<(PartialChecksum, Checksum, TableData)>,
     checksum_tx: Sender<(PartialChecksum, Checksum, TableData)>,
     job_counter: u32, // Counts if DT got a checksum for each job created
+    file_count: u64,
     multithreaded: bool,
+    progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
 }
 
 impl DuplicateTable {
@@ -52,6 +62,8 @@ impl DuplicateTable {
 
         let (checksum_tx, checksum_rx) = channel::<(PartialChecksum, Checksum, TableData)>();
 
+        let progress_indicator = Rc::new(RefCell::new(NoProgressIndicator{}));
+
         DuplicateTable {
             table: HashMap::new(),
             threadpool,
@@ -59,7 +71,16 @@ impl DuplicateTable {
             checksum_rx,
             checksum_tx,
             job_counter: 0,
+            file_count: 0,
+            progress_indicator,
         }
+    }
+
+    pub(crate) fn set_progress_indicator(
+        &mut self,
+        progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
+    ) {
+        self.progress_indicator = progress_indicator;
     }
 
     /// Adds a file to duplicate table.
@@ -72,6 +93,8 @@ impl DuplicateTable {
         if self.multithreaded && self.threadpool.as_ref().unwrap().panic_count() > 0 {
             panic!("There is at least one panicked checksum thread.");
         }
+
+        self.file_count += 1;
 
         match self.table.get(&part_checksum) {
             // There is single entry for part_checksum key
@@ -95,6 +118,7 @@ impl DuplicateTable {
             // Table doesn't have an entry for part_checksum key yet
             None => {
                 self.table.insert(part_checksum, DTEntry::Single(data));
+                self.progress_indicator.borrow().update(self.file_count - self.job_counter as u64);
             }
         }
     }
@@ -104,7 +128,15 @@ impl DuplicateTable {
         if self.multithreaded {
             log::debug!("Waiting for jobs in duplicate table.");
             // Wait for all jobs to finish
-            self.threadpool.as_ref().unwrap().join();
+            let threadpool = self.threadpool.as_ref().unwrap();
+            let mut num_not_done = threadpool.active_count() + threadpool.queued_count();
+            while num_not_done > 0 {
+                num_not_done = threadpool.active_count() + threadpool.queued_count();
+                self.progress_indicator.borrow().update(self.file_count - num_not_done as u64);
+                log::info!("Tracking progress.");
+                thread::sleep(2*HUNDRED_MILIS);
+            }
+
             log::debug!("All jobs in dupllicate table finished");
 
             // Panic if any thread panicked
@@ -120,6 +152,8 @@ impl DuplicateTable {
                 self._add_to_mult_entries(part_checksum, checksum, entry);
             }
             log::trace!("Done adding checksums to duplicate table.");
+
+            self.progress_indicator.borrow().finalise();
 
             // Panic if we are missing any checksum
             if self.job_counter > 0 {
@@ -185,6 +219,7 @@ impl DuplicateTable {
         } else {
             panic!("Duplicate Table should contain Multiple entries with key:\n{part_checksum}")
         }
+        self.progress_indicator.borrow().update(self.file_count - self.job_counter as u64);
     }
 
     /// Get duplicates of entry

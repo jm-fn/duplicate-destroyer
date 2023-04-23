@@ -23,11 +23,15 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::{read_dir, DirEntry, Metadata};
+use std::rc::Rc;
 
 use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
 
+use walkdir::WalkDir;
+
 use crate::checksum::get_partial_checksum;
 use crate::duplicate_table::DuplicateTable;
+use crate::progress_trait::*;
 use crate::DuplicateObject;
 
 const CHCKSUM_LENGTH: usize = 1024;
@@ -144,6 +148,10 @@ pub(crate) struct DirTree {
     dir_tree: Tree<RefCell<NodeType>>,
     root_id: NodeId,
     duplicate_table: DuplicateTable,
+    /// Displays progress indicator for adding dirs
+    multiline_indicator: Rc<RefCell<dyn ProgressMultiline>>,
+    /// Displays progress indicator for all operations when calculating duplicate dirs
+    progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
 }
 
 impl DirTree {
@@ -151,7 +159,12 @@ impl DirTree {
     ///
     /// # Arguments
     /// * `num_threads` - number of threads to be created in duplicate table
-    pub fn new(num_threads: usize) -> Self {
+    /// * `progress_bar` - whether to print progress bar
+    pub fn new(
+        num_threads: usize,
+        multiline_indicator: Rc<RefCell<dyn ProgressMultiline>>,
+        progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
+    ) -> Self {
         let mut dir_tree = Tree::new();
         let root_node = NodeType::Dir {
             path: "ROOT_NODE".into(),
@@ -161,7 +174,13 @@ impl DirTree {
         };
         let root_id = dir_tree.insert(Node::new(RefCell::new(root_node)), AsRoot).unwrap();
 
-        DirTree { dir_tree, root_id, duplicate_table: DuplicateTable::new(num_threads) }
+        DirTree {
+            dir_tree,
+            root_id,
+            duplicate_table: DuplicateTable::new(num_threads),
+            multiline_indicator,
+            progress_indicator,
+        }
     }
 
     #[allow(dead_code)]
@@ -182,6 +201,15 @@ impl DirTree {
     /// `paths` - Vector of paths where the duplicates should be searched. Can be paths of files
     /// or directories.
     pub(crate) fn add_directories<T: WithMetadata>(&mut self, dirs: Vec<T>) {
+        let progress_message =
+            format!("Adding dirs: {:?}", dirs.iter().map(|x| x.filepath()).collect::<Vec<_>>());
+        let mut total_files = 0u64;
+        for dir in dirs.iter() {
+            total_files += DirTree::_get_file_count(dir.filepath())
+        }
+        let pi = self.multiline_indicator.borrow_mut().create(progress_message, total_files);
+        self.duplicate_table.set_progress_indicator(pi);
+
         for dir in dirs {
             log::info!("Adding directory {:?} to DirTree.", dir.filepath());
             // FIXME: Somehow solve this without cloning root_id? <05-11-22> //
@@ -201,24 +229,39 @@ impl DirTree {
                 }
             }
         }
+
+        self.multiline_indicator.borrow().finalise();
     }
 
     /// Get the list of topmost duplicate groups.
     ///
     /// First we find duplicates for all nodes in DirTree. Then we create the list of duplicates -
-    /// we go recusrively through the DirTree, whenever we find that a node has duplicates we add
+    /// we go recursively through the DirTree, whenever we find that a node has duplicates we add
     /// the duplicate group to the list and we don't search its children.
     pub(crate) fn get_duplicates(&mut self, min_size: u64) -> Vec<DuplicateObject> {
         log::info!("Getting duplicates.");
+        let total_iterations = self._get_children_count(&self.root_id);
+        // There are 2 iterations over all nodes in _find_duplicates
+        self.progress_indicator.borrow_mut()
+            .create("Getting duplicate directories".into(), total_iterations * 2);
         // Get duplicates for all nodes
         self._find_duplicates();
+        self.progress_indicator.borrow().finalise();
 
         let mut duplicates: Vec<DuplicateObject> = vec![];
 
+        self.progress_indicator.borrow_mut().create("Curating duplicate list".into(), total_iterations);
+        let mut progress_counter: u64 = 0;
         let root_ids = self._get_root_ids();
         for r_id in root_ids {
-            self._recursively_get_duplicates(&r_id, min_size, &mut duplicates);
+            self._recursively_get_duplicates(
+                &r_id,
+                min_size,
+                &mut duplicates,
+                &mut progress_counter,
+            );
         }
+        self.progress_indicator.borrow().finalise();
 
         duplicates
     }
@@ -257,6 +300,15 @@ impl DirTree {
         }
     }
 
+    /// Returns the number of children of node
+    fn _get_children_count(&self, node_id: &NodeId) -> u64 {
+        self.dir_tree
+            .traverse_post_order_ids(node_id)
+            .expect(&format!("Could not get children of node: {node_id:?}."))
+            .count() as u64
+            - 1
+    }
+
     /// Go through DirTree and add the largest duplicate groups to duplicate list
     ///
     /// Check whether node with `node_id` contains duplicates. If so, add them to duplicate vector.
@@ -268,13 +320,16 @@ impl DirTree {
     /// * `node_id` - NodeId of the node that we want to search for duplicates
     /// * `duplicates` - Vector to add duplicate groups to
     /// * `min_size` - minimum size of each element of duplicate object that
-    // FIXME: Refactor this mess...
+    /// * `progress_counter` - number of nodes already processed
     fn _recursively_get_duplicates(
         &mut self,
         node_id: &NodeId,
         min_size: u64,
         duplicates: &mut Vec<DuplicateObject>,
+        progress_counter: &mut u64,
     ) {
+        //progress counter
+        *progress_counter += 1;
         //let node: &NodeType = &*self._get_node_data(node_id).borrow();
         let dupl_data: Option<(OsString, u64, HashSet<NodeId>)> = match &*self
             ._get_node_data(node_id)
@@ -319,6 +374,7 @@ impl DirTree {
 
         if let Some((path, size, node_duplicates)) = dupl_data {
             self._add_duplicates_to_list(path, size, node_duplicates, duplicates);
+            *progress_counter += self._get_children_count(node_id);
         } else {
             // If there are no duplicates, recursively search all children
             let child_ids: Vec<_> = self
@@ -328,9 +384,10 @@ impl DirTree {
                 .map(|x| x.to_owned())
                 .collect();
             for child_id in child_ids {
-                self._recursively_get_duplicates(&child_id, min_size, duplicates);
+                self._recursively_get_duplicates(&child_id, min_size, duplicates, progress_counter);
             }
         }
+        self.progress_indicator.borrow().update(*progress_counter);
     }
 
     /// Add duplicate group to the list of duplicates
@@ -552,6 +609,7 @@ impl DirTree {
             Ok(metadata) => {
                 // item is dir
                 if metadata.is_dir() {
+                    self.multiline_indicator.borrow().update_dir(name.clone());
                     // first check if we have permissions to read dir
                     log::info!("Reading dir: {name:?}");
                     match read_dir(&name) {
@@ -674,16 +732,25 @@ impl DirTree {
         root_ids
     }
 
+    /// Returns total number of files in `dir`
+    fn _get_file_count(dir: OsString) -> u64 {
+        WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|x| x.ok())
+            .filter(|x| x.file_type().is_file())
+            .count() as u64
+    }
+
     /// Gets the duplicates for each node in DirTree.
     ///
     /// Traverses the duplicate tree post-order and gets duplicates from duplicate table for each
     /// FileNode. For each DirNode
     fn _find_duplicates(&mut self) {
-        // FIXME: This is kinda hackish //
         // Get all root dirs processed
         log::info!("Finding duplicates.");
         let root_ids: Vec<_> = self._get_root_ids();
 
+        let mut progress_counter = 0u64;
         // Go through all root dirs and get duplicates for each node
         for root_id in root_ids.iter() {
             for id in self
@@ -691,14 +758,10 @@ impl DirTree {
                 .traverse_post_order_ids(root_id)
                 .expect(&format!("Could not traverse tree for {root_id:?}"))
             {
+                progress_counter += 1;
                 let node_data = self._get_node_data(&id);
                 match *node_data.borrow_mut() {
-                    NodeType::File {
-                        ref mut duplicates,
-                        ref part_checksum,
-                        ref path,
-                        ..
-                    } => {
+                    NodeType::File { ref mut duplicates, ref part_checksum, ref path, .. } => {
                         self._add_duplicates_to_file_entry(
                             id,
                             duplicates,
@@ -711,6 +774,7 @@ impl DirTree {
                     }
                     _ => {}
                 }
+                self.progress_indicator.borrow().update(progress_counter);
             }
         }
 
@@ -721,6 +785,7 @@ impl DirTree {
                 .traverse_post_order_ids(&root_id)
                 .expect(&format!("Could not traverse tree for {root_id:?}"))
             {
+                progress_counter += 1;
                 let node_data = self._get_node_data(&id);
                 if let NodeType::Dir { ref mut duplicates, ref mut size, ref path, .. } =
                     *node_data.borrow_mut()
@@ -728,6 +793,7 @@ impl DirTree {
                     self._filter_dir_duplicates(&id, duplicates, path);
                     self._set_dir_size(&id, size, path);
                 }
+                self.progress_indicator.borrow().update(progress_counter);
             }
         }
     }
@@ -977,13 +1043,16 @@ impl TableData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::NoProgressIndicator;
     // TODO: Add tests for WithMetadata <07-11-22> //
     // TODO: Add tests for logging
     // TODO: Add tests for failing file access
 
     #[test]
     fn dirtree_new_test() {
-        let dt = DirTree::new(0);
+        let pi = Rc::new(RefCell::new(NoProgressIndicator{}));
+        let pm = Rc::new(RefCell::new(NoProgressMultiline{}));
+        let dt = DirTree::new(0, pm, pi);
         let mut out = String::new();
         dt.print(&mut out);
         let expected_tree =

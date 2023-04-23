@@ -29,15 +29,19 @@
 //! ```
 //! will delete "path/to/dir/some_dir/A" in our example.
 
+mod progress_bar;
+
 use std::cmp::max;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{File, remove_dir_all};
+use std::fs::{remove_dir_all, File};
 use std::io;
 use std::io::prelude::*;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::Command;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use clap::Parser;
 use copy_confirmer::*;
@@ -46,7 +50,6 @@ use minus::Pager;
 use regex::Regex;
 use walkdir::WalkDir;
 
-use duplicate_destroyer;
 use duplicate_destroyer::DuplicateObject;
 
 /// Retries for input of user actions
@@ -130,8 +133,13 @@ fn main() -> io::Result<()> {
         log::trace!("{:?}", dir)
     }
 
+    let pb = Rc::new(RefCell::new(progress_bar::Progress::new()));
+    let add_dir_pb = Rc::new(RefCell::new(progress_bar::MultiProgressBar::new()));
+    config.set_multiline_progress(add_dir_pb);
+    config.set_progress_indicator(pb);
+
     // Run Duplicate Destroyer
-    let duplicates = duplicate_destroyer::get_duplicates(args.path, config).unwrap();
+    let duplicates = duplicate_destroyer::get_duplicates(args.path, &config).unwrap();
 
     _print_statistics(&duplicates);
 
@@ -157,7 +165,7 @@ fn interactive_loop(duplicates: &[DuplicateObject]) -> io::Result<()> {
     use Actions::*;
     let num_groups = duplicates.len();
 
-    for (index, group) in duplicates.into_iter().enumerate() {
+    for (index, group) in duplicates.iter().enumerate() {
         println!("Group {}/{}", index + 1, num_groups);
 
         let mut paths: Vec<_> = group.duplicates.iter().map(|x| x.to_owned()).collect();
@@ -246,14 +254,13 @@ fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
                 _print_action_input_err(
                     i,
                     MAX_RETRIES,
-                    format!(
-                        "Selected destructive action for all duplicates! Please repeat selection."
-                    ),
+                    "Selected destructive action for all duplicates! Please repeat selection."
+                        .to_string(),
                 );
                 continue;
             }
             original_path =
-                Some(files.iter().filter(|x| !acted_paths.contains(x)).next().unwrap().to_owned());
+                Some(files.iter().find(|x| !acted_paths.contains(x)).unwrap().to_owned());
         }
         return Ok((action, acted_paths, original_path));
     }
@@ -351,7 +358,11 @@ fn open_containing_dir(file: &OsString) -> io::Result<()> {
 /// * `original` - directory that should contain all the files of `deleted`
 fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
     // Prompt user for confirmation
-    if !Confirm::new().with_prompt(format!("Do you want to delete {:?}", deleted)).wait_for_newline(true).interact()? {
+    if !Confirm::new()
+        .with_prompt(format!("Do you want to delete {:?}", deleted))
+        .wait_for_newline(true)
+        .interact()?
+    {
         eprintln!("Abandoning deletion...");
         return Ok(());
     }
@@ -378,7 +389,7 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
 /// # Arguments
 /// * `duplicates` - Vector of all duplicate groups
 fn _print_statistics(duplicates: &Vec<DuplicateObject>) {
-    println!("");
+    println!();
     println!("{}", "-".repeat(40));
     let num_groups = duplicates.len();
     println!("Found {} groups.", num_groups);
@@ -386,7 +397,7 @@ fn _print_statistics(duplicates: &Vec<DuplicateObject>) {
         duplicates.iter().map(|x| x.size * (x.duplicates.len() - 1) as u64).sum();
     println!("Max saved space in this iteration: {}", _get_human_readable_size(max_saved_space));
     println!("{}", "-".repeat(40));
-    println!("");
+    println!();
 }
 
 // FIXME: Do this with some real parser...
@@ -397,7 +408,7 @@ fn _print_statistics(duplicates: &Vec<DuplicateObject>) {
 fn _parse_action_input(input: &str) -> Result<(Actions, Vec<usize>), String> {
     log::trace!("Got action input {input}");
     let re = Regex::new(r"(?P<action>[OFDHSNQ])(?P<files>(\s+\d+)*)$").unwrap();
-    let captures = re.captures(&input);
+    let captures = re.captures(input);
     if let Some(cap) = captures {
         let action_rep = cap.name("action").unwrap().as_str();
         let action = match action_rep {
@@ -419,10 +430,10 @@ fn _parse_action_input(input: &str) -> Result<(Actions, Vec<usize>), String> {
                 .map(|s| s.parse().expect("Parsing error"))
                 .collect();
         }
-        return Ok((action, files));
+        Ok((action, files))
     // Can not parse input
     } else {
-        return Err(format!("Could not parse input \"{input}\"."));
+        Err(format!("Could not parse input \"{input}\"."))
     }
 }
 
@@ -444,7 +455,7 @@ fn _get_human_readable_size(size: u64) -> String {
         if number < 1000 {
             return format!("{number}{unit}");
         }
-        number = number / 1000;
+        number /= 1000;
     }
     format!("{number}YB")
 }

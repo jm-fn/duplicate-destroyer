@@ -46,7 +46,7 @@
 //! let input_dirs = vec![OsString::from("tests/fixtures")];
 //!
 //! // Get duplicates
-//! let duplicates = duplicate_destroyer::get_duplicates(input_dirs, config).unwrap();
+//! let duplicates = duplicate_destroyer::get_duplicates(input_dirs, &config).unwrap();
 //!
 //! let expected_paths = [OsString::from("tests/fixtures/A"),
 //!                       OsString::from("tests/fixtures/B/A")];
@@ -59,13 +59,15 @@ mod config;
 mod dir_tree;
 mod duplicate_object;
 mod duplicate_table;
+mod progress_trait;
 
 pub use config::Config;
 pub use duplicate_object::DuplicateObject;
-
-use std::ffi::OsString;
+pub use progress_trait::*;
 
 use duplicate_object::*;
+
+use std::ffi::OsString;
 
 /// Find the largest duplicate directories or files
 ///
@@ -78,16 +80,24 @@ use duplicate_object::*;
 /// * `config` - configuration of duplicate destroyer. See [`Config`](crate::Config) struct
 pub fn get_duplicates(
     directories: Vec<OsString>,
-    config: Config,
+    config: &Config,
 ) -> Result<Vec<DuplicateObject>, DuDeError> {
     let num_threads: usize = config.get_num_threads();
-    let mut tree = dir_tree::DirTree::new(num_threads);
-    tree.add_directories(directories);
 
+    let mut tree = dir_tree::DirTree::new(
+        num_threads,
+        config.get_multiline_progress(),
+        config.get_progress_indicator(),
+    );
+
+    tree.add_directories(directories);
     log::debug!("Finished adding directories");
-    let min_size = config.get_minimum_size();
+
     tree.finalise();
+
+    let min_size = config.get_minimum_size();
     let mut duplicates = tree.get_duplicates(min_size);
+
     duplicates.sort_by_key(|x| x.size);
     duplicates.reverse();
 
