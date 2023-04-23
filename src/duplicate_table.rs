@@ -55,7 +55,7 @@ impl DuplicateTable {
         let mut threadpool = None;
         let mut multithreaded = false;
 
-        if !(num_threads == 0) {
+        if num_threads != 0 {
             threadpool = Some(ThreadPool::new(num_threads));
             multithreaded = true;
         }
@@ -239,9 +239,9 @@ impl DuplicateTable {
             match val {
                 DTEntry::Single(data) => {
                     if data == entry {
-                        return Ok(HashSet::new());
+                        Ok(HashSet::new())
                     } else {
-                        return Err("There is unexpected data at {part_checksum}");
+                        Err("There is unexpected data at {part_checksum}")
                     }
                 }
 
