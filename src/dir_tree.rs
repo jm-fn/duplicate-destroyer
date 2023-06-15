@@ -204,7 +204,7 @@ impl DirTree {
         let progress_message =
             format!("Adding dirs: {:?}", dirs.iter().map(|x| x.filepath()).collect::<Vec<_>>());
         let mut total_files = 0u64;
-        for dir in dirs.iter() {
+        for dir in &dirs {
             total_files += DirTree::get_file_count(dir.filepath())
         }
         let pi = self.multiline_indicator.borrow_mut().create(progress_message, total_files);
@@ -429,13 +429,13 @@ impl DirTree {
         log::trace!("Adding {:?} to list of duplicates.", path);
 
         let mut is_contained = false;
-        for id in data.iter() {
+        for id in &data {
             if let IsContained::ChildOfDuplicate = self.get_node_data(id).borrow().is_contained() {
                 is_contained = true;
             }
         }
 
-        for id in data.iter() {
+        for id in &data {
             if self.is_node_parent(id) {
                 log::info!("Node {:?} is parent", self.get_node_path(id));
                 self.remove_duplicate_from_list(id, duplicates);
@@ -447,7 +447,7 @@ impl DirTree {
             log::trace!("Adding {:?} to duplicates", paths);
             duplicates.push(DuplicateObject::new(size, paths));
 
-            for id in data.iter() {
+            for id in &data {
                 // Set all children as contained
                 let children: Vec<_> = self
                     .dir_tree
@@ -465,7 +465,7 @@ impl DirTree {
                 node.set_contained(IsContained::Duplicate);
             }
         } else {
-            for id in data.iter() {
+            for id in &data {
                 self.recursively_tag_as_contained(id);
             }
         }
@@ -743,7 +743,7 @@ impl DirTree {
 
         let mut progress_counter = 0u64;
         // Go through all root dirs and get duplicates for each node
-        for root_id in root_ids.iter() {
+        for root_id in &root_ids {
             for id in self
                 .dir_tree
                 .traverse_post_order_ids(root_id)
