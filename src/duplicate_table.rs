@@ -103,16 +103,16 @@ impl DuplicateTable {
                 let single_entry =
                     self.table.insert(part_checksum.clone(), DTEntry::new_multi_entry());
                 if let Some(DTEntry::Single(se)) = single_entry {
-                    self._add_item(part_checksum.clone(), se);
+                    self.add_item(part_checksum.clone(), se);
                 } else {
                     panic!("Duplicate table should contain single entry at {part_checksum}");
                 }
-                self._add_item(part_checksum, data);
+                self.add_item(part_checksum, data);
             }
 
             // There are multiple entries for part_checksum key
             Some(DTEntry::Multiple(_)) => {
-                self._add_item(part_checksum, data);
+                self.add_item(part_checksum, data);
             }
 
             // Table doesn't have an entry for part_checksum key yet
@@ -149,7 +149,7 @@ impl DuplicateTable {
                 self.checksum_rx.try_iter().collect::<Vec<(PartialChecksum, Checksum, TableData)>>()
             {
                 log::trace!("Adding {:?} to mult entries", entry.path());
-                self._add_to_mult_entries(part_checksum, checksum, entry);
+                self.add_to_mult_entries(part_checksum, checksum, entry);
             }
             log::trace!("Done adding checksums to duplicate table.");
 
@@ -170,12 +170,12 @@ impl DuplicateTable {
     /// # Arguments
     /// * `part_checksum` - partial checksum of the item
     /// * `entry` - entry data
-    fn _add_item(&mut self, part_checksum: String, entry: TableData) {
+    fn add_item(&mut self, part_checksum: String, entry: TableData) {
         if self.multithreaded {
-            self._add_job(part_checksum, entry);
+            self.add_job(part_checksum, entry);
         } else {
             let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
-            self._add_to_mult_entries(part_checksum, checksum, entry);
+            self.add_to_mult_entries(part_checksum, checksum, entry);
         }
     }
 
@@ -184,7 +184,7 @@ impl DuplicateTable {
     /// # Arguments
     /// * `part_checksum` - partial checksum of the item
     /// * `entry` - entry data
-    fn _add_job(&mut self, part_checksum: String, entry: TableData) {
+    fn add_job(&mut self, part_checksum: String, entry: TableData) {
         log::debug!("Adding job for {:?}", entry.path());
         self.job_counter += 1;
         let checksum_tx = self.checksum_tx.clone();
@@ -203,7 +203,7 @@ impl DuplicateTable {
     ///
     /// # Panics
     /// Panics if the value at `partial_checksum` is not of type MultipleEntries
-    fn _add_to_mult_entries(&mut self, part_checksum: String, checksum: String, entry: TableData) {
+    fn add_to_mult_entries(&mut self, part_checksum: String, checksum: String, entry: TableData) {
         if self.multithreaded {
             self.job_counter -= 1;
         }

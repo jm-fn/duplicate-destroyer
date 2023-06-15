@@ -111,7 +111,7 @@ fn main() -> io::Result<()> {
 
     // Get minimum size of elements of duplicate groups
     if let Some(ms) = args.minimum_size {
-        match _parse_human_readable_size(&ms) {
+        match parse_human_readable_size(&ms) {
             None => {
                 log::error!("Could not parse minimum size: {}", ms);
                 return Err(io::Error::new(
@@ -141,7 +141,7 @@ fn main() -> io::Result<()> {
     // Run Duplicate Destroyer
     let duplicates = duplicate_destroyer::get_duplicates(args.path, &config).unwrap();
 
-    _print_statistics(&duplicates);
+    print_statistics(&duplicates);
 
     // Print json results to file
     if let Some(json_file) = args.json_file {
@@ -171,7 +171,7 @@ fn interactive_loop(duplicates: &[DuplicateObject]) -> io::Result<()> {
         let mut paths: Vec<_> = group.duplicates.iter().map(|x| x.to_owned()).collect();
         paths.sort_unstable();
 
-        _print_group(&paths[..], group.size);
+        print_group(&paths[..], group.size);
 
         loop {
             let action = get_action(&paths[..])?;
@@ -215,7 +215,7 @@ fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
         let mut file_nums = vec![];
 
         // parse user input into Actions enum member and numbers of files
-        match _parse_action_input(&input.trim().to_uppercase()) {
+        match parse_action_input(&input.trim().to_uppercase()) {
             Ok((new_action, new_files)) => {
                 action = new_action;
                 file_nums = new_files;
@@ -223,7 +223,7 @@ fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
 
             // Could not parse input
             Err(err) => {
-                _print_action_input_err(i, MAX_RETRIES, err);
+                print_action_input_err(i, MAX_RETRIES, err);
                 continue;
             }
         };
@@ -231,7 +231,7 @@ fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
         // Check that file numbers entered are valid
         let file_max = file_nums.iter().max().unwrap_or(&0);
         if !*file_max < files.len() {
-            _print_action_input_err(
+            print_action_input_err(
                 i,
                 MAX_RETRIES,
                 format!("There is no file with number {file_max}"),
@@ -251,7 +251,7 @@ fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
         let mut original_path: Option<OsString> = None;
         if let Delete | ReplaceWithHardlink | ReplaceWithSoftlink = action {
             if acted_paths.len() >= files.len() {
-                _print_action_input_err(
+                print_action_input_err(
                     i,
                     MAX_RETRIES,
                     "Selected destructive action for all duplicates! Please repeat selection."
@@ -368,7 +368,7 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
     }
 
     // Check that original contains all files of deleted and that they share no inodes
-    if !_verify_copy(original, deleted)? {
+    if !verify_copy(original, deleted)? {
         return Err(io::Error::new(
             io::ErrorKind::Other,
             format!("Could not delete {:?}, could not verify that it is indeed copy", deleted),
@@ -388,14 +388,14 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
 ///
 /// # Arguments
 /// * `duplicates` - Vector of all duplicate groups
-fn _print_statistics(duplicates: &Vec<DuplicateObject>) {
+fn print_statistics(duplicates: &Vec<DuplicateObject>) {
     println!();
     println!("{}", "-".repeat(40));
     let num_groups = duplicates.len();
     println!("Found {} groups.", num_groups);
     let max_saved_space: u64 =
         duplicates.iter().map(|x| x.size * (x.duplicates.len() - 1) as u64).sum();
-    println!("Max saved space in this iteration: {}", _get_human_readable_size(max_saved_space));
+    println!("Max saved space in this iteration: {}", get_human_readable_size(max_saved_space));
     println!("{}", "-".repeat(40));
     println!();
 }
@@ -405,7 +405,7 @@ fn _print_statistics(duplicates: &Vec<DuplicateObject>) {
 /// Parse user input string into action and file numbers
 ///
 /// Returns a tuple of Actions enum member and a vector of file numbers
-fn _parse_action_input(input: &str) -> Result<(Actions, Vec<usize>), String> {
+fn parse_action_input(input: &str) -> Result<(Actions, Vec<usize>), String> {
     log::trace!("Got action input {input}");
     let re = Regex::new(r"(?P<action>[OFDHSNQ])(?P<files>(\s+\d+)*)$").unwrap();
     let captures = re.captures(input);
@@ -438,7 +438,7 @@ fn _parse_action_input(input: &str) -> Result<(Actions, Vec<usize>), String> {
 }
 
 /// Print error if the user entered action in wrong format
-fn _print_action_input_err(iteration: u32, max_retries: u32, message: String) {
+fn print_action_input_err(iteration: u32, max_retries: u32, message: String) {
     println!("{}", message);
     if iteration < max_retries {
         println!("Try again:");
@@ -449,7 +449,7 @@ fn _print_action_input_err(iteration: u32, max_retries: u32, message: String) {
 ///
 /// # Arguments
 /// `size` - size in bytes
-fn _get_human_readable_size(size: u64) -> String {
+fn get_human_readable_size(size: u64) -> String {
     let mut number = size;
     for unit in ["B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB"] {
         if number < 1000 {
@@ -461,7 +461,7 @@ fn _get_human_readable_size(size: u64) -> String {
 }
 
 /// Print group info
-fn _print_group(paths: &[OsString], size: u64) {
+fn print_group(paths: &[OsString], size: u64) {
     // Print files in group
     let max_length = paths.iter().map(|x| x.len()).max().unwrap_or(60) + 7;
     println!("{}", "-".repeat(max_length));
@@ -469,7 +469,7 @@ fn _print_group(paths: &[OsString], size: u64) {
         println!("{:3}. {:?}", index, path);
     }
     println!("{}", "-".repeat(max_length));
-    println!("Size: {}", _get_human_readable_size(size));
+    println!("Size: {}", get_human_readable_size(size));
     println!("{}", "-".repeat(11));
 }
 
@@ -477,7 +477,7 @@ fn _print_group(paths: &[OsString], size: u64) {
 ///
 /// # Arguments
 /// * `input` - size in SI units
-fn _parse_human_readable_size(input: &str) -> Option<u64> {
+fn parse_human_readable_size(input: &str) -> Option<u64> {
     let mut result = None;
 
     let re = Regex::new(r"(?P<value>\d+)(?P<prefix>[kMGTPE])?$").unwrap();
@@ -508,7 +508,7 @@ fn _parse_human_readable_size(input: &str) -> Option<u64> {
 /// # Arguments
 /// * `original` - directory that will be left unchanged in destructive operations
 /// * `copy` - directory that will be changed in destructive operation
-fn _verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
+fn verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
     // verify that copy contains all files of original dir
     eprintln!("Checking that all files in {:?} are duplicates:", copy);
     let cc = CopyConfirmer::new(1);
@@ -519,7 +519,7 @@ fn _verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
         for file in missing_files {
             file_text.push_str(&format!("{:?}", file));
         }
-        _print_to_pager(file_text);
+        print_to_pager(file_text);
 
         return Ok(false);
     }
@@ -553,7 +553,7 @@ fn _verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
 }
 
 /// Print text to static pager
-fn _print_to_pager(text: String) {
+fn print_to_pager(text: String) {
     // FIXME: somehow this interferes with std::fmt::Write, put this to the top of file
     use std::fmt::Write;
 
