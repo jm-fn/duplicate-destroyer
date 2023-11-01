@@ -23,7 +23,7 @@ serde_json = "1"
 threadpool = "1"
 walkdir = "2"
 indicatif = {version = "0", optional = true }
-copy_confirmer = {version = "0", optional = true }
+copy_confirmer = {version = "0.0.3", optional = true }
 dialoguer = {version = "0", optional = true }
 minus = {version = "5", optional = true, features = ["static_output", "search"]}
 

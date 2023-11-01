@@ -34,7 +34,7 @@ mod progress_bar;
 use std::cmp::max;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{remove_dir_all, File};
+use std::fs::{remove_dir_all, remove_file, File};
 use std::io;
 use std::io::prelude::*;
 use std::os::unix::fs::MetadataExt;
@@ -302,6 +302,15 @@ fn execute_action(
                 panic!("There is no original path for delete action.")
             }
         }
+        Actions::ReplaceWithHardlink => {
+            if let Some(original) = original_path {
+                for file in files {
+                    replace_with_hardlink(&file, &original)?;
+                }
+            } else {
+                panic!("There is no original path for delete action.")
+            }
+        }
 
         _ => {
             println!("This is not yet implemented... ");
@@ -361,7 +370,8 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
     if !Confirm::new()
         .with_prompt(format!("Do you want to delete {:?}", deleted))
         .wait_for_newline(true)
-        .interact()?
+        .interact()
+        .expect("Could not show dialogue.")
     {
         eprintln!("Abandoning deletion...");
         return Ok(());
@@ -377,6 +387,67 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
 
     eprintln!("Deleting {:?}", deleted);
     remove_dir_all(deleted)?;
+    Ok(())
+}
+
+/// Replace files in `replaced` with hard links to files in `original`
+///
+/// Confirms that user really wants to replace all files with hard links and that all files are in
+/// the `original` dir and then replaces all the files with hardlinks to their duplicates
+///
+/// # Arguments
+/// * `replaced` - folder whose content should be replaced with hardlinks
+/// * `original` - folder whose contents should be kept
+fn replace_with_hardlink(replaced: &OsString, original: &OsString) -> io::Result<()> {
+    // Prompt user for confirmation
+    if !Confirm::new()
+        .with_prompt(format!(
+            "Do you want to replace all contents of {:?} with hardlinks?",
+            replaced
+        ))
+        .wait_for_newline(true)
+        .interact()
+        .expect("Could not show dialogue.")
+    {
+        eprintln!("Abandoning replacement...");
+        return Ok(());
+    }
+
+    // Check that original contains all files of replaced folder
+    eprintln!("Checking that all files in {:?} are duplicates:", replaced);
+    let cc = CopyConfirmer::new(1);
+    let cc_result = cc.compare(replaced.to_owned(), &[original.to_owned()]).unwrap();
+    match cc_result {
+        // If there are some files missing in original abort
+        ConfirmerResult::MissingFiles(missing_files) => {
+            // Print out all missing files
+            let mut file_text = format!("Missing files from {:?}: (Press q to quit)\n", replaced);
+            for file in missing_files {
+                file_text.push_str(&format!("{:?}", file));
+            }
+            print_to_pager(file_text);
+
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "Could not replace {:?} with links. Could not verify it is indeed copy",
+                    replaced
+                ),
+            ));
+        }
+
+        ConfirmerResult::Ok(found_files) => {
+            // src_paths are files in `replaced` directory, dest_paths are their duplicates in
+            // `original` directory
+            for FileFound { src_paths, dest_paths } in found_files.values() {
+                for path in src_paths {
+                    remove_file(path)?;
+                    std::fs::hard_link(&dest_paths[0], path)?
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -512,7 +583,7 @@ fn verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
     // verify that copy contains all files of original dir
     eprintln!("Checking that all files in {:?} are duplicates:", copy);
     let cc = CopyConfirmer::new(1);
-    let cc_result = cc.compare(original.to_owned(), vec![copy.to_owned()]).unwrap();
+    let cc_result = cc.compare(original, &[copy]).unwrap();
     if let ConfirmerResult::MissingFiles(missing_files) = cc_result {
         // Print out all missing files
         let mut file_text = format!("Missing files from {:?}: (Press q to quit)\n", copy);
