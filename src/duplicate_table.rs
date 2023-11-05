@@ -14,19 +14,18 @@
 //!
 //! To get the duplicates of an item we check the value corresponding to the partial checksum and if there are
 //! multiple entries, we get the vector containing the specified item.
-use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time;
-use std::thread;
-use std::rc::Rc;
 use std::cell::RefCell;
-
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread;
+use std::time;
 
 use threadpool::ThreadPool;
 
 use crate::checksum::get_checksum;
 use crate::dir_tree::TableData;
-use crate::{ProgressIndicator, NoProgressIndicator};
+use crate::{NoProgressIndicator, ProgressIndicator};
 
 type PartialChecksum = String;
 type Checksum = String;
@@ -62,7 +61,7 @@ impl DuplicateTable {
 
         let (checksum_tx, checksum_rx) = channel::<(PartialChecksum, Checksum, TableData)>();
 
-        let progress_indicator = Rc::new(RefCell::new(NoProgressIndicator{}));
+        let progress_indicator = Rc::new(RefCell::new(NoProgressIndicator {}));
 
         DuplicateTable {
             table: HashMap::new(),
@@ -134,7 +133,7 @@ impl DuplicateTable {
                 num_not_done = threadpool.active_count() + threadpool.queued_count();
                 self.progress_indicator.borrow().update(self.file_count - num_not_done as u64);
                 log::info!("Tracking progress.");
-                thread::sleep(2*HUNDRED_MILIS);
+                thread::sleep(2 * HUNDRED_MILIS);
             }
 
             log::debug!("All jobs in dupllicate table finished");

@@ -31,6 +31,7 @@
 
 mod progress_bar;
 
+use std::cell::RefCell;
 use std::cmp::max;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -40,7 +41,6 @@ use std::io::prelude::*;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::Command;
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use clap::Parser;

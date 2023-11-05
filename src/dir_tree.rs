@@ -271,8 +271,11 @@ impl DirTree {
 
     /// Get the RefCell contained in node with `node_id`.
     fn get_node_data(&self, node_id: &NodeId) -> &RefCell<NodeType> {
-        let node_data =
-            self.dir_tree.get(node_id).unwrap_or_else(|_| panic!("Could not get node {node_id:?}")).data();
+        let node_data = self
+            .dir_tree
+            .get(node_id)
+            .unwrap_or_else(|_| panic!("Could not get node {node_id:?}"))
+            .data();
         node_data
     }
 
@@ -290,7 +293,10 @@ impl DirTree {
 
     /// Returns true if node is flagged as ParentOfDuplicate
     fn is_node_parent(&self, node_id: &NodeId) -> bool {
-        matches!(self.get_node_data(node_id).borrow().is_contained(), IsContained::ParentOfDuplicate)
+        matches!(
+            self.get_node_data(node_id).borrow().is_contained(),
+            IsContained::ParentOfDuplicate
+        )
     }
 
     /// Returns the number of children of node
@@ -851,9 +857,7 @@ impl DirTree {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.is_empty() => return, // child node has no duplicates, so dir not
                 // duplicate
-                Some(hs) => {
-                    hs.iter().filter_map(|x| self.get_parent_table_data(x)).collect()
-                }
+                Some(hs) => hs.iter().filter_map(|x| self.get_parent_table_data(x)).collect(),
             };
         } else {
             // No child nodes, nothing to do...
@@ -866,9 +870,7 @@ impl DirTree {
             let parent_duplicates: HashSet<NodeId> = match data.duplicates() {
                 None => return, // child node is inaccessible (or symlink), dir not duplicate
                 Some(hs) if hs.is_empty() => return, // child node has no duplicates, dir not dupl.
-                Some(hs) => {
-                    hs.iter().filter_map(|x| self.get_parent_table_data(x)).collect()
-                }
+                Some(hs) => hs.iter().filter_map(|x| self.get_parent_table_data(x)).collect(),
             };
             result.retain(|x| parent_duplicates.contains(x))
         }

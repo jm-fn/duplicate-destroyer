@@ -1,8 +1,8 @@
 //! Configuration of duplicate destroyer
 //!
 //! This module provides the structure that contains all configuration of duplicate destroyer.
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::{NoProgressIndicator, NoProgressMultiline, ProgressIndicator, ProgressMultiline};
 
@@ -58,30 +58,36 @@ impl Config {
     }
 
     /// Set [`progress_indicator`](Config::progress_indicator)
-    pub fn set_progress_indicator(&mut self, progress_indicator: Rc<RefCell<dyn ProgressIndicator>>) {
+    pub fn set_progress_indicator(
+        &mut self,
+        progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
+    ) {
         self.progress_indicator = Some(progress_indicator);
     }
 
     /// Get [`progress_indicator`](Config::progress_indicator)
-    pub fn get_progress_indicator(&self) -> Rc<RefCell<dyn ProgressIndicator> >{
+    pub fn get_progress_indicator(&self) -> Rc<RefCell<dyn ProgressIndicator>> {
         if let Some(ref pi) = self.progress_indicator {
             Rc::clone(pi)
         } else {
-            Rc::new(RefCell::new(NoProgressIndicator{}))
+            Rc::new(RefCell::new(NoProgressIndicator {}))
         }
     }
 
     /// Set [`multiline_progress`](Config::multiline_progress)
-    pub fn set_multiline_progress(&mut self, progress_indicator: Rc<RefCell<dyn ProgressMultiline>>) {
+    pub fn set_multiline_progress(
+        &mut self,
+        progress_indicator: Rc<RefCell<dyn ProgressMultiline>>,
+    ) {
         self.progress_multiline = Some(progress_indicator);
     }
 
     /// Get [`multiline_progress`](Config::multiline_progress)
-    pub fn get_multiline_progress(&self) -> Rc<RefCell<dyn ProgressMultiline> >{
+    pub fn get_multiline_progress(&self) -> Rc<RefCell<dyn ProgressMultiline>> {
         if let Some(ref pm) = self.progress_multiline {
             Rc::clone(pm)
         } else {
-            Rc::new(RefCell::new(NoProgressMultiline{}))
+            Rc::new(RefCell::new(NoProgressMultiline {}))
         }
     }
 }
