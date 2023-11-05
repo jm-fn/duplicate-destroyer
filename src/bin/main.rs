@@ -93,6 +93,11 @@ enum Actions {
     Quit,
 }
 
+enum LinkType {
+    HardLink,
+    SoftLink,
+}
+
 /// Stores action, vector of paths to files to be acted upon
 /// If the action changes the files, the last member is the file that should be kept unchanged.
 type ActionTuple = (Actions, Vec<OsString>, Option<OsString>);
@@ -292,7 +297,9 @@ fn execute_action(
         }
 
         Actions::Nothing => {}
+
         Actions::Quit => std::process::exit(0),
+
         Actions::Delete => {
             if let Some(original) = original_path {
                 for file in files {
@@ -302,18 +309,25 @@ fn execute_action(
                 panic!("There is no original path for delete action.")
             }
         }
+
         Actions::ReplaceWithHardlink => {
             if let Some(original) = original_path {
                 for file in files {
-                    replace_with_hardlink(&file, &original)?;
+                    replace_with_link(&file, &original, LinkType::HardLink)?;
                 }
             } else {
-                panic!("There is no original path for delete action.")
+                panic!("There is no original path for hardlink action.")
             }
         }
 
-        _ => {
-            println!("This is not yet implemented... ");
+        Actions::ReplaceWithSoftlink => {
+            if let Some(original) = original_path {
+                for file in files {
+                    replace_with_link(&file, &original, LinkType::SoftLink)?;
+                }
+            } else {
+                panic!("There is no original path for hardlink action.")
+            }
         }
     }
 
@@ -398,13 +412,20 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
 /// # Arguments
 /// * `replaced` - folder whose content should be replaced with hardlinks
 /// * `original` - folder whose contents should be kept
-fn replace_with_hardlink(replaced: &OsString, original: &OsString) -> io::Result<()> {
+fn replace_with_link(
+    replaced: &OsString,
+    original: &OsString,
+    link_type: LinkType,
+) -> io::Result<()> {
+    let mut prompt = String::new();
+    if let LinkType::HardLink = link_type {
+        prompt = format!("Do you want to replace all contents of {:?} with hard links?", replaced);
+    } else {
+        prompt = format!("Do you want to replace all contents of {:?} with soft links?", replaced);
+    }
     // Prompt user for confirmation
     if !Confirm::new()
-        .with_prompt(format!(
-            "Do you want to replace all contents of {:?} with hardlinks?",
-            replaced
-        ))
+        .with_prompt(prompt)
         .wait_for_newline(true)
         .interact()
         .expect("Could not show dialogue.")
@@ -442,7 +463,11 @@ fn replace_with_hardlink(replaced: &OsString, original: &OsString) -> io::Result
             for FileFound { src_paths, dest_paths } in found_files.values() {
                 for path in src_paths {
                     remove_file(path)?;
-                    std::fs::hard_link(&dest_paths[0], path)?
+                    if let LinkType::HardLink = link_type {
+                        std::fs::hard_link(&dest_paths[0], path)?;
+                    } else {
+                        std::os::unix::fs::symlink(&dest_paths[0], path)?;
+                    }
                 }
             }
         }
