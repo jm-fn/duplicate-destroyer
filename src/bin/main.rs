@@ -30,30 +30,23 @@
 //! will delete "path/to/dir/some_dir/A" in our example.
 
 mod progress_bar;
+mod helper_functions;
+mod actions;
 
 use std::cell::RefCell;
 use std::cmp::max;
-use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{remove_dir_all, remove_file, File};
+use std::fs::File;
 use std::io;
 use std::io::prelude::*;
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
-use std::process::Command;
 use std::rc::Rc;
 
 use clap::Parser;
-use copy_confirmer::*;
-use dialoguer::Confirm;
-use minus::Pager;
 use regex::Regex;
-use walkdir::WalkDir;
 
 use duplicate_destroyer::DuplicateObject;
+use actions::*;
 
-/// Retries for input of user actions
-const MAX_RETRIES: u32 = 4u32;
 
 /// CLI argument parser
 #[derive(Parser, Debug)]
@@ -79,28 +72,6 @@ struct Args {
     #[clap(long)]
     no_interactive: bool,
 }
-
-/// Actions possible for duplicate files
-// TODO: Add Diff parent dir
-#[derive(Debug)]
-enum Actions {
-    Open,
-    OpenFolder,
-    Delete,
-    ReplaceWithHardlink,
-    ReplaceWithSoftlink,
-    Nothing,
-    Quit,
-}
-
-enum LinkType {
-    HardLink,
-    SoftLink,
-}
-
-/// Stores action, vector of paths to files to be acted upon
-/// If the action changes the files, the last member is the file that should be kept unchanged.
-type ActionTuple = (Actions, Vec<OsString>, Option<OsString>);
 
 /// Get duplicates for user-specified directories and let user handle them
 ///
@@ -167,7 +138,6 @@ fn main() -> io::Result<()> {
 /// # Arguments
 /// * `duplicates` - slice of all duplicate groups
 fn interactive_loop(duplicates: &[DuplicateObject]) -> io::Result<()> {
-    use Actions::*;
     let num_groups = duplicates.len();
 
     for (index, group) in duplicates.iter().enumerate() {
@@ -179,296 +149,11 @@ fn interactive_loop(duplicates: &[DuplicateObject]) -> io::Result<()> {
         print_group(&paths[..], group.size);
 
         loop {
-            let action = get_action(&paths[..])?;
-            // Yay, this is ugly...
-            if let Err(e) = execute_action(&action.0, action.1, action.2) {
+            let action = Actions::get_from_input(&paths[..])?;
+            if let Err(e) = action.execute() {
                 println!("Error running action: {}\nChoose another action.", e);
-            } else if let Delete | ReplaceWithHardlink | ReplaceWithSoftlink | Nothing = action.0 {
+            } else if !action.should_get_another() {
                 break; // Move to another duplicate group
-            } else if let Quit = action.0 {
-                return Ok(()); // Break out of the interactive loop
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Get action and files affected from user input
-///
-/// The action is represented by a tuple - with:
-/// * action.0 - member of `Actions` enum
-/// * action.1 - files affected by the action
-/// * action.2 - optional original file, that should stay unaffected by the action
-///              (this is present only for destructive actions)
-///
-/// # Arguments
-/// * `files` - Vector of duplicate file in a duplicate group
-fn get_action(files: &[OsString]) -> io::Result<ActionTuple> {
-    use Actions::*;
-    println!(
-        "[O]pen, Open [F]older, [D]elete, ReplaceWith[H]ardlink, ReplaceWith[S]oftlink, [N]othing, [Q]uit"
-    );
-
-    for i in 0..MAX_RETRIES {
-        // get user input
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        #[allow(unused_assignments)]
-        let mut action: Actions = Actions::Nothing;
-        #[allow(unused_assignments)]
-        let mut file_nums = vec![];
-
-        // parse user input into Actions enum member and numbers of files
-        match parse_action_input(&input.trim().to_uppercase()) {
-            Ok((new_action, new_files)) => {
-                action = new_action;
-                file_nums = new_files;
-            }
-
-            // Could not parse input
-            Err(err) => {
-                print_action_input_err(i, MAX_RETRIES, err);
-                continue;
-            }
-        };
-
-        // Check that file numbers entered are valid
-        let file_max = file_nums.iter().max().unwrap_or(&0);
-        if !*file_max < files.len() {
-            print_action_input_err(
-                i,
-                MAX_RETRIES,
-                format!("There is no file with number {file_max}"),
-            );
-            continue;
-        }
-
-        // Get paths corresponding to file numbers
-        let acted_paths: Vec<_> = files
-            .iter()
-            .enumerate()
-            .filter(|(num, _path)| file_nums.contains(num))
-            .map(|(_num, path)| path.to_owned())
-            .collect();
-
-        // If we are deleting/replacing files, get a file that will not be modified
-        let mut original_path: Option<OsString> = None;
-        if let Delete | ReplaceWithHardlink | ReplaceWithSoftlink = action {
-            if acted_paths.len() >= files.len() {
-                print_action_input_err(
-                    i,
-                    MAX_RETRIES,
-                    "Selected destructive action for all duplicates! Please repeat selection."
-                        .to_string(),
-                );
-                continue;
-            }
-            original_path =
-                Some(files.iter().find(|x| !acted_paths.contains(x)).unwrap().to_owned());
-        }
-        return Ok((action, acted_paths, original_path));
-    }
-    // Did not get valid input, return default action
-    Err(io::Error::new(io::ErrorKind::InvalidInput, "Failed to parse user input."))
-}
-
-/// Execute action on all files in `files`
-///
-/// # Arguments
-/// * `action` - Action to be taken
-/// * `files` - vector of files, `action` is executed on each
-fn execute_action(
-    action: &Actions,
-    files: Vec<OsString>,
-    original_path: Option<OsString>,
-) -> io::Result<()> {
-    match action {
-        Actions::Open => {
-            for file in files {
-                open_file(&file)?;
-            }
-        }
-
-        Actions::OpenFolder => {
-            for file in files {
-                open_containing_dir(&file)?;
-            }
-        }
-
-        Actions::Nothing => {}
-
-        Actions::Quit => std::process::exit(0),
-
-        Actions::Delete => {
-            if let Some(original) = original_path {
-                for file in files {
-                    delete_dir(&file, &original)?;
-                }
-            } else {
-                panic!("There is no original path for delete action.")
-            }
-        }
-
-        Actions::ReplaceWithHardlink => {
-            if let Some(original) = original_path {
-                for file in files {
-                    replace_with_link(&file, &original, LinkType::HardLink)?;
-                }
-            } else {
-                panic!("There is no original path for hardlink action.")
-            }
-        }
-
-        Actions::ReplaceWithSoftlink => {
-            if let Some(original) = original_path {
-                for file in files {
-                    replace_with_link(&file, &original, LinkType::SoftLink)?;
-                }
-            } else {
-                panic!("There is no original path for hardlink action.")
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Open a file using the preferred application
-///
-/// Uses Linux-specific `xdg-open` to open file with default application specified by desktop
-// FIXME: Make this multiplatform?
-fn open_file(file: &OsString) -> io::Result<()> {
-    log::trace!("Opening file {:?}", file);
-
-    let file_str: String = file.to_owned().into_string().unwrap();
-    let out = Command::new("xdg-open").arg(file_str).output()?;
-
-    // If opening failed, print stderr
-    if !out.status.success() {
-        log::error!("Error opening file: {}", String::from_utf8_lossy(&out.stderr));
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "Could not open file {file:?} with xdg-open. Got status {}",
-                out.status.code().unwrap_or(0)
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// Open directory containing the specified file
-///
-/// # Arguments
-/// `file` - file, whose parent dir should be opened
-fn open_containing_dir(file: &OsString) -> io::Result<()> {
-    let dir = Path::new(file)
-        .parent()
-        .expect("Could not get parent path of {data.path}")
-        .as_os_str()
-        .to_owned();
-    open_file(&dir)
-}
-
-/// Delete `deleted` dir
-///
-/// First confirms that user truly wants to delete the directory, that all the files in
-/// `deleted` dir are present in another (`original`) dir and that the directories share no inodes.
-///
-/// # Arguments
-/// * `deleted` - deleted directory
-/// * `original` - directory that should contain all the files of `deleted`
-fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
-    // Prompt user for confirmation
-    if !Confirm::new()
-        .with_prompt(format!("Do you want to delete {:?}", deleted))
-        .wait_for_newline(true)
-        .interact()
-        .expect("Could not show dialogue.")
-    {
-        eprintln!("Abandoning deletion...");
-        return Ok(());
-    }
-
-    // Check that original contains all files of deleted and that they share no inodes
-    if !verify_copy(original, deleted)? {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Could not delete {:?}, could not verify that it is indeed copy", deleted),
-        ));
-    }
-
-    eprintln!("Deleting {:?}", deleted);
-    remove_dir_all(deleted)?;
-    Ok(())
-}
-
-/// Replace files in `replaced` with hard links to files in `original`
-///
-/// Confirms that user really wants to replace all files with hard links and that all files are in
-/// the `original` dir and then replaces all the files with hardlinks to their duplicates
-///
-/// # Arguments
-/// * `replaced` - folder whose content should be replaced with hardlinks
-/// * `original` - folder whose contents should be kept
-fn replace_with_link(
-    replaced: &OsString,
-    original: &OsString,
-    link_type: LinkType,
-) -> io::Result<()> {
-    let mut prompt = String::new();
-    if let LinkType::HardLink = link_type {
-        prompt = format!("Do you want to replace all contents of {:?} with hard links?", replaced);
-    } else {
-        prompt = format!("Do you want to replace all contents of {:?} with soft links?", replaced);
-    }
-    // Prompt user for confirmation
-    if !Confirm::new()
-        .with_prompt(prompt)
-        .wait_for_newline(true)
-        .interact()
-        .expect("Could not show dialogue.")
-    {
-        eprintln!("Abandoning replacement...");
-        return Ok(());
-    }
-
-    // Check that original contains all files of replaced folder
-    eprintln!("Checking that all files in {:?} are duplicates:", replaced);
-    let cc = CopyConfirmer::new(1);
-    let cc_result = cc.compare(replaced.to_owned(), &[original.to_owned()]).unwrap();
-    match cc_result {
-        // If there are some files missing in original abort
-        ConfirmerResult::MissingFiles(missing_files) => {
-            // Print out all missing files
-            let mut file_text = format!("Missing files from {:?}: (Press q to quit)\n", replaced);
-            for file in missing_files {
-                file_text.push_str(&format!("{:?}", file));
-            }
-            print_to_pager(file_text);
-
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Could not replace {:?} with links. Could not verify it is indeed copy",
-                    replaced
-                ),
-            ));
-        }
-
-        ConfirmerResult::Ok(found_files) => {
-            // src_paths are files in `replaced` directory, dest_paths are their duplicates in
-            // `original` directory
-            for FileFound { src_paths, dest_paths } in found_files.values() {
-                for path in src_paths {
-                    remove_file(path)?;
-                    if let LinkType::HardLink = link_type {
-                        std::fs::hard_link(&dest_paths[0], path)?;
-                    } else {
-                        std::os::unix::fs::symlink(&dest_paths[0], path)?;
-                    }
-                }
             }
         }
     }
@@ -494,51 +179,6 @@ fn print_statistics(duplicates: &Vec<DuplicateObject>) {
     println!("Max saved space in this iteration: {}", get_human_readable_size(max_saved_space));
     println!("{}", "-".repeat(40));
     println!();
-}
-
-// FIXME: Do this with some real parser...
-// TODO: Add check that actions have files if applicable?
-/// Parse user input string into action and file numbers
-///
-/// Returns a tuple of Actions enum member and a vector of file numbers
-fn parse_action_input(input: &str) -> Result<(Actions, Vec<usize>), String> {
-    log::trace!("Got action input {input}");
-    let re = Regex::new(r"(?P<action>[OFDHSNQ])(?P<files>(\s+\d+)*)$").unwrap();
-    let captures = re.captures(input);
-    if let Some(cap) = captures {
-        let action_rep = cap.name("action").unwrap().as_str();
-        let action = match action_rep {
-            "O" => Actions::Open,
-            "F" => Actions::OpenFolder,
-            "D" => Actions::Delete,
-            "H" => Actions::ReplaceWithHardlink,
-            "S" => Actions::ReplaceWithSoftlink,
-            "N" => Actions::Nothing,
-            "Q" => Actions::Quit,
-            &_ => panic!("Error parsing"),
-        };
-        // Get parsed files
-        let mut files: Vec<usize> = vec![];
-        if let Some(files_rep) = cap.name("files") {
-            files = files_rep
-                .as_str()
-                .split_whitespace()
-                .map(|s| s.parse().expect("Parsing error"))
-                .collect();
-        }
-        Ok((action, files))
-    // Can not parse input
-    } else {
-        Err(format!("Could not parse input \"{input}\"."))
-    }
-}
-
-/// Print error if the user entered action in wrong format
-fn print_action_input_err(iteration: u32, max_retries: u32, message: String) {
-    println!("{}", message);
-    if iteration < max_retries {
-        println!("Try again:");
-    }
 }
 
 /// Get human readable size in SI units from bytes
@@ -594,66 +234,4 @@ fn parse_human_readable_size(input: &str) -> Option<u64> {
     }
 
     result
-}
-
-/// Verify that it is safe to delete copy
-///
-/// Verifies that all file in `copy` dir are present in `original` dir and that the two directories
-/// share no inodes.
-///
-/// # Arguments
-/// * `original` - directory that will be left unchanged in destructive operations
-/// * `copy` - directory that will be changed in destructive operation
-fn verify_copy(original: &OsString, copy: &OsString) -> io::Result<bool> {
-    // verify that copy contains all files of original dir
-    eprintln!("Checking that all files in {:?} are duplicates:", copy);
-    let cc = CopyConfirmer::new(1);
-    let cc_result = cc.compare(original, &[copy]).unwrap();
-    if let ConfirmerResult::MissingFiles(missing_files) = cc_result {
-        // Print out all missing files
-        let mut file_text = format!("Missing files from {:?}: (Press q to quit)\n", copy);
-        for file in missing_files {
-            file_text.push_str(&format!("{:?}", file));
-        }
-        print_to_pager(file_text);
-
-        return Ok(false);
-    }
-
-    // Verify that the copy shares no inodes with original dir
-    let origin_inodes: HashSet<_> = WalkDir::new(original)
-        .into_iter()
-        .filter_map(|x| x.ok()) // FIXME: maybe let this panic instead to avoid missing inodes?
-        .map(|x| x.metadata())
-        .filter_map(|x| x.ok())
-        .map(|x| x.ino())
-        .collect();
-
-    let copy_inodes: HashSet<_> = WalkDir::new(copy)
-        .into_iter()
-        .filter_map(|x| x.ok())
-        .map(|x| x.metadata())
-        .filter_map(|x| x.ok())
-        .map(|x| x.ino())
-        .collect();
-
-    if !copy_inodes.is_disjoint(&origin_inodes) {
-        eprintln!(
-            "There are some files in {:?} and {:?} sharing inodes. I will not to delete {:?}",
-            original, copy, copy
-        );
-        return Ok(false);
-    }
-
-    Ok(true)
-}
-
-/// Print text to static pager
-fn print_to_pager(text: String) {
-    // FIXME: somehow this interferes with std::fmt::Write, put this to the top of file
-    use std::fmt::Write;
-
-    let mut output = Pager::new();
-    write!(output, "{}", text).expect("Could not write to pager");
-    minus::page_all(output).expect("Could not write to pager.");
 }
