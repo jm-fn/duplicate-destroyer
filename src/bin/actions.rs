@@ -289,7 +289,11 @@ fn delete_dir(deleted: &OsString, original: &OsString) -> io::Result<()> {
     }
 
     println!("Deleting {:?}", deleted);
-    remove_dir_all(deleted)?;
+    if Path::new(&deleted).is_dir() {
+        remove_dir_all(deleted)?;
+    } else {
+        remove_file(deleted)?;
+    }
     Ok(())
 }
 
