@@ -30,6 +30,7 @@ minus = {version = "5", optional = true, features = ["static_output", "search"]}
 [dev-dependencies]
 tempdir = "0.3"
 mockall = "0.11"
+criterion = "0.3"
 
 [features]
 cli = ["clap", "indicatif", "copy_confirmer", "dialoguer", "minus"]
@@ -42,3 +43,7 @@ required-features = ["cli"]
 [lib]
 name = "duplicate_destroyer"
 path = "src/lib.rs"
+
+[[bench]]
+name = "lib_bench"
+harness = false
