@@ -4,7 +4,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::{NoProgressIndicator, NoProgressMultiline, ProgressIndicator, ProgressMultiline};
+use crate::{
+    HashAlgorithm, NoProgressIndicator, NoProgressMultiline, ProgressIndicator, ProgressMultiline,
+};
 
 /// Stores all configuration of Duplicate Destroyer
 #[derive(Default)]
@@ -34,6 +36,9 @@ pub struct Config {
     /// [`ProgressMultiline`](crate::progress_trait::ProgressMultiline) trait.
     /// [default = [`NoProgressMultiline`](crate::progress_trait::NoProgressAddDir)]
     pub progress_multiline: Option<Rc<RefCell<dyn ProgressMultiline>>>,
+
+    /// Hashing algorithm used to compare the files [default = Blake3]
+    pub hash_algorithm: Option<HashAlgorithm>,
 }
 
 impl Config {
@@ -89,5 +94,15 @@ impl Config {
         } else {
             Rc::new(RefCell::new(NoProgressMultiline {}))
         }
+    }
+
+    /// Set [`hash_algorithm`](Config::hash_algorithm)
+    pub fn set_hash_algorithm(&mut self, hash_algorithm: HashAlgorithm) {
+        self.hash_algorithm = Some(hash_algorithm);
+    }
+
+    /// Get [`hash_algorithm`](Config::hash_algorithm)
+    pub fn get_hash_algorithm(&self) -> HashAlgorithm {
+        self.hash_algorithm.unwrap_or(HashAlgorithm::Blake2)
     }
 }

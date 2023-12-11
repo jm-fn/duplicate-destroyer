@@ -61,6 +61,7 @@ mod duplicate_object;
 mod duplicate_table;
 mod progress_trait;
 
+pub use checksum::HashAlgorithm;
 pub use config::Config;
 pub use duplicate_object::DuplicateObject;
 pub use progress_trait::*;
@@ -88,6 +89,7 @@ pub fn get_duplicates(
         num_threads,
         config.get_multiline_progress(),
         config.get_progress_indicator(),
+        config.get_hash_algorithm(),
     );
 
     tree.add_directories(directories);

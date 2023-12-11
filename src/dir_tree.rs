@@ -23,13 +23,14 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs::{read_dir, DirEntry, Metadata};
+use std::io;
 use std::rc::Rc;
 
 use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
 
 use walkdir::WalkDir;
 
-use crate::checksum::get_partial_checksum;
+use crate::checksum::{blake2_partial, HashAlgorithm};
 use crate::duplicate_table::DuplicateTable;
 use crate::progress_trait::*;
 use crate::DuplicateObject;
@@ -152,6 +153,8 @@ pub(crate) struct DirTree {
     multiline_indicator: Rc<RefCell<dyn ProgressMultiline>>,
     /// Displays progress indicator for all operations when calculating duplicate dirs
     progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
+    /// Calculates the keys of duplicate table
+    partial_checksum_fn: fn(&OsString) -> io::Result<String>,
 }
 
 impl DirTree {
@@ -164,6 +167,7 @@ impl DirTree {
         num_threads: usize,
         multiline_indicator: Rc<RefCell<dyn ProgressMultiline>>,
         progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
+        hash_algorithm: HashAlgorithm,
     ) -> Self {
         let mut dir_tree = Tree::new();
         let root_node = NodeType::Dir {
@@ -174,12 +178,17 @@ impl DirTree {
         };
         let root_id = dir_tree.insert(Node::new(RefCell::new(root_node)), AsRoot).unwrap();
 
+        let partial_checksum_fn = match hash_algorithm {
+            HashAlgorithm::Blake2 => blake2_partial::<CHCKSUM_LENGTH>,
+        };
+
         DirTree {
             dir_tree,
             root_id,
-            duplicate_table: DuplicateTable::new(num_threads),
+            duplicate_table: DuplicateTable::new(num_threads, hash_algorithm),
             multiline_indicator,
             progress_indicator,
+            partial_checksum_fn,
         }
     }
 
@@ -643,7 +652,7 @@ impl DirTree {
                 // item is a file
                 } else if metadata.is_file() {
                     // Symlinks get extra treatment
-                    match get_partial_checksum::<CHCKSUM_LENGTH>(&name) {
+                    match (self.partial_checksum_fn)(&name) {
                         Ok(checksum) => {
                             let node = NodeType::File {
                                 path: name,
@@ -1045,7 +1054,7 @@ mod tests {
     fn dirtree_new_test() {
         let pi = Rc::new(RefCell::new(NoProgressIndicator {}));
         let pm = Rc::new(RefCell::new(NoProgressMultiline {}));
-        let dt = DirTree::new(0, pm, pi);
+        let dt = DirTree::new(0, pm, pi, HashAlgorithm::Blake2);
         let mut out = String::new();
         dt.print(&mut out);
         let expected_tree =

@@ -16,16 +16,19 @@
 //! multiple entries, we get the vector containing the specified item.
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
+use std::io;
 use std::rc::Rc;
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time;
 
 use threadpool::ThreadPool;
 
-use crate::checksum::get_checksum;
+use crate::checksum::blake2;
 use crate::dir_tree::TableData;
-use crate::{NoProgressIndicator, ProgressIndicator};
+use crate::{HashAlgorithm, NoProgressIndicator, ProgressIndicator};
 
 type PartialChecksum = String;
 type Checksum = String;
@@ -42,6 +45,7 @@ pub(crate) struct DuplicateTable {
     file_count: u64,
     multithreaded: bool,
     progress_indicator: Rc<RefCell<dyn ProgressIndicator>>,
+    checksum_fn: Arc<fn(&OsString) -> io::Result<String>>,
 }
 
 impl DuplicateTable {
@@ -49,7 +53,7 @@ impl DuplicateTable {
     ///
     /// # Arguments
     /// * `num_threads` - number of threads to be created by duplicate table
-    pub(crate) fn new(num_threads: usize) -> Self {
+    pub(crate) fn new(num_threads: usize, hash_algorithm: HashAlgorithm) -> Self {
         // Create threadpool if num_threads > 0
         let mut threadpool = None;
         let mut multithreaded = false;
@@ -63,6 +67,10 @@ impl DuplicateTable {
 
         let progress_indicator = Rc::new(RefCell::new(NoProgressIndicator {}));
 
+        let checksum_fn = match hash_algorithm {
+            HashAlgorithm::Blake2 => blake2,
+        };
+
         DuplicateTable {
             table: HashMap::new(),
             threadpool,
@@ -72,6 +80,7 @@ impl DuplicateTable {
             job_counter: 0,
             file_count: 0,
             progress_indicator,
+            checksum_fn: Arc::new(checksum_fn),
         }
     }
 
@@ -173,7 +182,7 @@ impl DuplicateTable {
         if self.multithreaded {
             self.add_job(part_checksum, entry);
         } else {
-            let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
+            let checksum = (self.checksum_fn)(entry.path()).expect("Could not calculate checksum");
             self.add_to_mult_entries(part_checksum, checksum, entry);
         }
     }
@@ -187,8 +196,9 @@ impl DuplicateTable {
         log::debug!("Adding job for {:?}", entry.path());
         self.job_counter += 1;
         let checksum_tx = self.checksum_tx.clone();
+        let checksum_fn = self.checksum_fn.clone();
         self.threadpool.as_ref().unwrap().execute(move || {
-            let checksum = get_checksum(entry.path()).expect("Could not calculate checksum");
+            let checksum = checksum_fn(entry.path()).expect("Could not calculate checksum");
             checksum_tx.send((part_checksum, checksum, entry)).expect("Could not send data.");
         })
     }
