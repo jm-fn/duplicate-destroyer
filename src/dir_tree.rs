@@ -30,7 +30,7 @@ use id_tree::{InsertBehavior::*, Node, NodeId, Tree};
 
 use walkdir::WalkDir;
 
-use crate::checksum::{blake2_partial, HashAlgorithm};
+use crate::checksum::{get_partial_checksum_fn, HashAlgorithm};
 use crate::duplicate_table::DuplicateTable;
 use crate::progress_trait::*;
 use crate::DuplicateObject;
@@ -178,9 +178,7 @@ impl DirTree {
         };
         let root_id = dir_tree.insert(Node::new(RefCell::new(root_node)), AsRoot).unwrap();
 
-        let partial_checksum_fn = match hash_algorithm {
-            HashAlgorithm::Blake2 => blake2_partial::<CHCKSUM_LENGTH>,
-        };
+        let partial_checksum_fn = get_partial_checksum_fn::<CHCKSUM_LENGTH>(&hash_algorithm);
 
         DirTree {
             dir_tree,

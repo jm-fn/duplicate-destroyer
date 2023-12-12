@@ -26,7 +26,7 @@ use std::time;
 
 use threadpool::ThreadPool;
 
-use crate::checksum::blake2;
+use crate::checksum::get_checksum_fn;
 use crate::dir_tree::TableData;
 use crate::{HashAlgorithm, NoProgressIndicator, ProgressIndicator};
 
@@ -67,9 +67,7 @@ impl DuplicateTable {
 
         let progress_indicator = Rc::new(RefCell::new(NoProgressIndicator {}));
 
-        let checksum_fn = match hash_algorithm {
-            HashAlgorithm::Blake2 => blake2,
-        };
+        let checksum_fn = get_checksum_fn(&hash_algorithm);
 
         DuplicateTable {
             table: HashMap::new(),
