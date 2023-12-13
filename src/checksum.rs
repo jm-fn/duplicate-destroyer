@@ -1,11 +1,12 @@
 //! Checksum calculation module
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{prelude::Read, BufReader, Result};
+use std::io::{self, prelude::Read, BufReader};
 
 use digest::Digest;
 
-#[derive(Copy, Clone)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 /// Hash Algorithm types supported
 pub enum HashAlgorithm {
     Blake2,
@@ -17,7 +18,7 @@ pub enum HashAlgorithm {
 ///
 /// # Arguments
 /// * `ha` - hash algorithm that is used to calculate the checksum
-pub(crate) fn get_checksum_fn(ha: &HashAlgorithm) -> fn(&OsString) -> Result<String> {
+pub(crate) fn get_checksum_fn(ha: &HashAlgorithm) -> fn(&OsString) -> io::Result<String> {
     match ha {
         HashAlgorithm::Blake2 => get_checksum::<blake2::Blake2b512>,
         HashAlgorithm::SHA3_256 => get_checksum::<sha3::Sha3_256>,
@@ -30,7 +31,7 @@ pub(crate) fn get_checksum_fn(ha: &HashAlgorithm) -> fn(&OsString) -> Result<Str
 /// # Arguments
 /// * `path` - path to the file to be checksummed
 /// * `H` - hasher structure that is used for checksum calculation
-fn get_checksum<H>(path: &OsString) -> Result<String>
+fn get_checksum<H>(path: &OsString) -> io::Result<String>
 where
     H: Digest,
     digest::Output<H>: std::fmt::LowerHex,
@@ -59,7 +60,7 @@ where
 /// * `ha` - hash algorithm that is used to calculate the checksum
 pub(crate) fn get_partial_checksum_fn<const LEN: usize>(
     ha: &HashAlgorithm,
-) -> fn(&OsString) -> Result<String> {
+) -> fn(&OsString) -> io::Result<String> {
     match *ha {
         HashAlgorithm::Blake2 => get_partial_checksum::<LEN, blake2::Blake2b512>,
         HashAlgorithm::SHA3_256 => get_partial_checksum::<LEN, sha3::Sha3_256>,
@@ -78,7 +79,7 @@ pub(crate) fn get_partial_checksum_fn<const LEN: usize>(
 ///           If file size is smaller than LEN, get_partial_checksum uses the whole file.
 /// * `path` - path to file to be checksummed
 /// * `H` - hasher structure that is used for checksum calculation
-fn get_partial_checksum<const LEN: usize, H>(path: &OsString) -> Result<String>
+fn get_partial_checksum<const LEN: usize, H>(path: &OsString) -> io::Result<String>
 where
     H: Digest,
     digest::Output<H>: std::fmt::LowerHex,
@@ -100,7 +101,7 @@ mod tests {
     use tempdir::TempDir;
 
     #[test]
-    fn blake2_partial_test() -> Result<()> {
+    fn blake2_partial_test() -> io::Result<()> {
         // Prepare test file
         let tmp_dir = TempDir::new("duplicate_destroyer_test_dir")?;
         let file_path = tmp_dir.path().join("test_file.txt");

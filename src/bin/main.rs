@@ -29,9 +29,9 @@
 //! ```
 //! will delete "path/to/dir/some_dir/A" in our example.
 
-mod progress_bar;
-mod helper_functions;
 mod actions;
+mod helper_functions;
+mod progress_bar;
 
 use std::cell::RefCell;
 use std::cmp::max;
@@ -44,9 +44,8 @@ use std::rc::Rc;
 use clap::Parser;
 use regex::Regex;
 
-use duplicate_destroyer::DuplicateObject;
 use actions::*;
-
+use duplicate_destroyer::{DuplicateObject, HashAlgorithm};
 
 /// CLI argument parser
 #[derive(Parser, Debug)]
@@ -71,6 +70,10 @@ struct Args {
     /// Disable interactive duplicate handling
     #[clap(long)]
     no_interactive: bool,
+
+    /// Hash algorithm used to compare files
+    #[clap(short, long)]
+    algorithm: Option<HashAlgorithm>,
 }
 
 /// Get duplicates for user-specified directories and let user handle them
@@ -97,6 +100,11 @@ fn main() -> io::Result<()> {
             }
             Some(val) => config.set_minimum_size(val),
         }
+    }
+
+    // Get hashing algorithm
+    if let Some(hashing_algo) = args.algorithm {
+        config.set_hash_algorithm(hashing_algo);
     }
 
     // Get number of threads
