@@ -77,16 +77,27 @@ When using the DuDe with a modern CPU and an external HDD it is usually better t
 ### Minimum-size
 The minimum size of the duplicates returned can be specified with the `--minimum-size` argument. Note however, that this will not significantly reduce the computation time, since the DuDe still gets the checksum of all the files that might have duplicates. This is done because even large directories might differ in some small files and by disregarding the small files completely we would run the risk of losing some small but important data.
 
+### Hashing Algorithms
+DuDe can use these hashing algorithms for comparing files:
+* blake2 [default]
+* sha3-256
+* sha3-512
+If the DuDe is running on memory-constrained system it is recommended to switch to sha3-256 algorithm:
+```
+dude --path path/to/some/dir --algorithm "sha2-512"
+```
+
 ### CLI options
 ```
-Usage: dude [OPTIONS]
+Usage: dude [OPTIONS] --path <PATH>
 
 Options:
   -p, --path <PATH>                  Add path to be scanned
-  -m, --minimum-size <MINIMUM_SIZE>  Minimul size of duplicates considered (can have a metric prefix) [100]
-  -j, --jobs <JOBS>                  Number of jobs that run simultaneously
+  -m, --minimum-size <MINIMUM_SIZE>  Minimum size of duplicates considered (can have a metric prefix) [default=100]
+  -j, --jobs <JOBS>                  Number of jobs that run simultaneously [default=0]
       --json-file <FILE>             Output the list of duplicates to a file in json format
       --no-interactive               Disable interactive duplicate handling
+  -a, --algorithm <ALGORITHM>        Hash algorithm used to compare files [possible values: blake2, sha3-256, sha3-512]
   -h, --help                         Print help
   -V, --version                      Print version
 ```
