@@ -82,9 +82,10 @@ DuDe can use these hashing algorithms for comparing files:
 * blake2 [default]
 * sha3-256
 * sha3-512
+
 If the DuDe is running on memory-constrained system it is recommended to switch to sha3-256 algorithm:
 ```
-dude --path path/to/some/dir --algorithm "sha2-512"
+dude --path path/to/some/dir --algorithm "sha3-256"
 ```
 
 ### CLI options
